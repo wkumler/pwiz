@@ -1,5 +1,5 @@
 # Optional, but good to give a name
-name: Unofficial toolset CI
+name: Unofficial toolset CI2
  
 # This means the workflow will be triggered
 #    on push to master branch
