@@ -36,6 +36,9 @@ using namespace pwiz::msdata::mzmlb;
 #ifndef WITHOUT_MZ5
 #include "Serializer_mz5.hpp"
 #endif
+#ifndef WITHOUT_DUCKDB
+#include "Serializer_DuckDB.hpp"
+#endif
 #include "DefaultReaderList.hpp"
 #include "pwiz/utility/misc/Filesystem.hpp"
 #include "pwiz/utility/misc/Std.hpp"
@@ -211,6 +214,8 @@ void writeStream(ostream& os, const MSData& msd, const MSDataFile::WriteConfig& 
         }
         case MSDataFile::Format_MZ5:
             throw runtime_error("[MSDataFile::write()] mz5 does not support writing with an output stream.");
+        case MSDataFile::Format_DuckDB:
+            throw runtime_error("[MSDataFile::write()] DuckDB does not support writing with an output stream.");
         default:
             throw runtime_error("[MSDataFile::write()] Format not implemented.");
     }
@@ -252,6 +257,16 @@ void MSDataFile::write(const MSData& msd,
             Connection_mzMLb con(filename, config.mzMLb_chunk_size, mzMLb_compression_level);
             boost::iostreams::stream<Connection_mzMLb> mzMLb_os(con, config.mzMLb_chunk_size);
             writeStream(mzMLb_os, msd, config, iterationListenerRegistry);
+#endif
+            break;
+        }
+        case MSDataFile::Format_DuckDB:
+        {
+#ifdef WITHOUT_DUCKDB
+            throw runtime_error("[MSDataFile::write()] library was not built with DuckDB support.");
+#else
+            Serializer_DuckDB serializer(config);
+            serializer.write(filename, msd, iterationListenerRegistry);
 #endif
             break;
         }
@@ -353,6 +368,9 @@ PWIZ_API_DECL ostream& operator<<(ostream& os, MSDataFile::Format format)
             return os;
         case MSDataFile::Format_mzMLb:
             os << "mzMLb";
+            return os;
+        case MSDataFile::Format_DuckDB:
+            os << "DuckDB";
             return os;
         default:
             os << "Unknown";

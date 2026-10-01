@@ -50,7 +50,8 @@ ECHO
 #
 #   --without-mz5           Build without mz5 support
 #   --without-mzmlb         Build without mzMLb support
-#   --without-agilent       Build without Agilent support
+#   --without-duckdb        Build without DuckDB output support
+#   --without-agilent      Build without Agilent support
 #   --without-bruker        Build without Bruker support
 #   --without-sciex         Build without Sciex support
 #   --without-shimadzu      Build without Shimadzu support
@@ -166,6 +167,10 @@ else
     {
         echo "NOTICE: building without mzMLb support as requested" ;
     }
+    if ( "--without-duckdb" in  [ modules.peek : ARGV ] )
+    {
+        echo "NOTICE: building without DuckDB support as requested" ;
+    }
 }
 
 # do we want to skip mz5 support?
@@ -194,12 +199,50 @@ rule without-mzmlb ( properties * )
    }
 }
 
+# DuckDB is linked from the official prebuilt binaries in libraries/duckdb (see the Jamfile there)
+constant DUCKDB_VERSION : 1.5.6 ;
+
+# returns the directory of the prebuilt DuckDB library for the target platform, or nothing if there isn't one
+rule duckdb-library-path ( properties * )
+{
+    if ( ! <address-model>32 in $(properties) ) && ( <toolset>gcc in $(properties) ) && [ MATCH (LINUX) : $(.os) ]
+    {
+        return $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-linux-amd64 ;
+    }
+}
+
+# do we want to skip DuckDB support? (also skipped on platforms without a prebuilt DuckDB library)
+rule without-duckdb ( properties * )
+{
+   if --without-duckdb in [ modules.peek : ARGV ]
+   {
+       return <location-prefix>without-duckdb <define>WITHOUT_DUCKDB ;
+   }
+   else if [ without-binary-msdata $(properties) ]
+   {
+       return [ without-binary-msdata $(properties) ] ;
+   }
+   else if ! [ duckdb-library-path $(properties) ]
+   {
+       return <define>WITHOUT_DUCKDB ;
+   }
+}
+
+# returns the DuckDB library as a <library> requirement, unless building without DuckDB support
+rule duckdb-requirements ( properties * )
+{
+    if ! [ MATCH (WITHOUT_DUCKDB) : [ without-duckdb $(properties) ] ]
+    {
+        return <library>$(PWIZ_LIBRARIES_PATH)/duckdb//duckdb ;
+    }
+}
+
 # do we want to skip all binary file formats (vendors and mz5)?
 rule without-binary-msdata ( properties * )
 {
    if --without-binary-msdata in [ modules.peek : ARGV ]
    {
-       return <location-prefix>without-binary-msdata <define>WITHOUT_MZ5 <define>WITHOUT_MZMLB <vendor-api-support>off ;
+       return <location-prefix>without-binary-msdata <define>WITHOUT_MZ5 <define>WITHOUT_MZMLB <define>WITHOUT_DUCKDB <vendor-api-support>off ;
    }
 }
 
@@ -435,7 +478,10 @@ project pwiz
         <conditional>@static-with-fpic
         
         # mz5 support?
-        <conditional>@without-mz5 
+        <conditional>@without-mz5
+
+        # DuckDB support?
+        <conditional>@without-duckdb
         
         # msdata text only?
         <conditional>@without-binary-msdata 
@@ -679,6 +725,20 @@ else
             echo "NOTICE: not extracting vendor APIs; use --i-agree-to-the-vendor-licenses to extract and use them." ;
         }
      }
+}
+
+# extract the prebuilt DuckDB library for this platform (MIT licensed, so no license switch is needed)
+if ( ! --incremental in $(args) ) && ( ! --without-duckdb in $(args) ) && ! [ without-binary-msdata ]
+{
+    local duckdb-platform ;
+    if [ MATCH (LINUX) : $(.os) ] && $(.platform) = X86_64 { duckdb-platform = linux-amd64 ; }
+
+    local duckdb-dir = duckdb-$(DUCKDB_VERSION)-$(duckdb-platform) ;
+    if $(duckdb-platform) && ! [ path.exists $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir) ]
+    {
+        echo "Extracting DuckDB $(DUCKDB_VERSION)..." ;
+        SHELL "$(PWIZ_LIBRARIES_PATH)/7zz x -aoa -bso0 -bsp0 -o$(PWIZ_LIBRARIES_PATH)/duckdb $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir).7z" ;
+    }
 }
 
 

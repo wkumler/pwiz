@@ -379,6 +379,7 @@ build-nt-x86
 /*.log
 /bs*.bat
 /libraries/boost_1_*
+/libraries/duckdb/duckdb-*/
 /libraries/expat*
 /libraries/hdf5*
 /libraries/freetype*

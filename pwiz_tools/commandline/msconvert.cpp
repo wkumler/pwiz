@@ -102,7 +102,8 @@ string Config::outputFilename(const string& filename, const MSData& msd) const
             extension == ".ms2" ||
             extension == ".cms2" ||
             extension == ".mzmlb" ||
-            extension == ".mz5")
+            extension == ".mz5" ||
+            extension == ".duckdb")
             runId = bfs::basename(runId);
     }
 
@@ -197,6 +198,9 @@ void ShowExamples(ostringstream &usage)
         << "# multiple filters: apply peak picking and then keep all peaks that are at least 50% of the intensity of the base peak:\n"
         << "msconvert data.RAW --filter \"peakPicking true 1-\" --filter \"threshold bpi-relative .5 most-intense\"\n"
         << endl
+        << "# write every run of an LC-MS batch into one DuckDB database (queryable with SQL)\n"
+        << "msconvert *.RAW --duckdb --outfile batch.duckdb\n"
+        << endl
         << "# use a configuration file\n"
         << "msconvert data.RAW -c config.txt\n"
         << endl
@@ -243,6 +247,7 @@ Config parseCommandLine(int argc, char** argv)
     bool format_mzMLb = false;
     int mzMLb_chunk_size = 0;    
     bool format_mz5 = false;
+    bool format_duckdb = false;
     bool precision_32 = false;
     bool precision_64 = false;
     bool mz_precision_32 = false;
@@ -300,6 +305,9 @@ Config parseCommandLine(int argc, char** argv)
 #ifndef WITHOUT_MZMLB
             "|mzMLb"
 #endif
+#ifndef WITHOUT_DUCKDB
+            "|duckdb"
+#endif
             "]")
         ("mzML",
             po::value<bool>(&format_mzML)->zero_tokens(),
@@ -322,6 +330,15 @@ Config parseCommandLine(int argc, char** argv)
         ("mzMLbCompressionLevel",
             po::value<int>(&config.writeConfig.mzMLb_compression_level)->default_value(4),
             ": mzMLb GZIP compression level (0-9)")
+#endif
+#ifndef WITHOUT_DUCKDB
+        ("duckdb",
+            po::value<bool>(&format_duckdb)->zero_tokens(),
+            ": write all input files into a single DuckDB database (requires --outfile); "
+            "if the database exists, the runs are added to it")
+        ("duckdbReplaceRuns",
+            po::value<bool>(&config.writeConfig.duckdbReplaceRuns)->zero_tokens(),
+            ": replace runs that are already in the DuckDB database instead of failing")
 #endif
         ("mgf",
             po::value<bool>(&format_MGF)->zero_tokens(),
@@ -620,7 +637,7 @@ Config parseCommandLine(int argc, char** argv)
     if (config.filenames.empty())
         throw user_error("[msconvert] No files specified.");
 
-    int count = format_text + format_mzML + format_mzXML + format_MGF + format_MS2 + format_CMS2 + format_mz5 + format_mzMLb;
+    int count = format_text + format_mzML + format_mzXML + format_MGF + format_MS2 + format_CMS2 + format_mz5 + format_mzMLb + format_duckdb;
     if (count > 1) throw user_error("[msconvert] Multiple format flags specified.");
     if (format_text) config.writeConfig.format = MSDataFile::Format_Text;
     if (format_mzML) config.writeConfig.format = MSDataFile::Format_mzML;
@@ -632,7 +649,20 @@ Config parseCommandLine(int argc, char** argv)
     if (format_CMS2) config.writeConfig.format = MSDataFile::Format_CMS2;
     if (format_mz5) config.writeConfig.format = MSDataFile::Format_MZ5;
     if (format_mzMLb) config.writeConfig.format = MSDataFile::Format_mzMLb;
+    if (format_duckdb) config.writeConfig.format = MSDataFile::Format_DuckDB;
 
+    // a DuckDB database holds every input file, so it needs a name that doesn't come from any one of them
+    if (format_duckdb)
+    {
+        if (config.outputFile.empty())
+            throw user_error("[msconvert] --duckdb requires --outfile to name the database that all input files are written to.");
+        if (config.outputPath == "-")
+            throw user_error("[msconvert] --duckdb cannot write to stdout.");
+        if (config.merge)
+            throw user_error("[msconvert] --duckdb already combines all input files into one database; --merge is not supported with it.");
+        if (gzip)
+            throw user_error("[msconvert] --gzip is not supported with --duckdb.");
+    }
 
     config.writeConfig.gzipped = gzip; // if true, file is written as .gz
 
@@ -675,6 +705,12 @@ Config parseCommandLine(int argc, char** argv)
                 throw user_error("[msconvert] Not built with mz5 support."); 
 #endif
                 config.extension = ".mz5";
+                break;
+            case MSDataFile::Format_DuckDB:
+#ifdef WITHOUT_DUCKDB
+                throw user_error("[msconvert] Not built with DuckDB support.");
+#endif
+                config.extension = ".duckdb";
                 break;
             default:
                 throw user_error("[msconvert] Unsupported format."); 
@@ -1087,6 +1123,11 @@ void processFile(const string& filename, const Config& config, const ReaderList&
                 configCopy.singleThreaded = !boost::dynamic_pointer_cast<SpectrumListWrapper>(msd.run.spectrumListPtr)->benefitsFromWorkerThreads();
             configCopy.writeConfig.useWorkerThreads = !bool(configCopy.singleThreaded);
 
+            // runs are identified by input filename (plus run id when a file has more than one run)
+            configCopy.writeConfig.inputFilename = bfs::path(filename).filename().string();
+            if (msdList.size() > 1)
+                configCopy.writeConfig.inputFilename += "#" + msd.run.id;
+
             // write out the new data file
             string outputFilename = config.outputFilename(filename, msd);
             //*os_ << "writing output file" << (configCopy.writeConfig.useWorkerThreads ? " (multithreaded)" : "") << ": " << outputFilename << endl;
@@ -1107,7 +1148,12 @@ void processFile(const string& filename, const Config& config, const ReaderList&
                 {
                     throw user_error("[msconvert] Output filepath is the same as input filepath");
                 }
-                writeAtomically(msd, outputFilename, configCopy.writeConfig, pILR);
+
+                // a DuckDB database accumulates runs, so it is appended to in place (each run is written in one transaction)
+                if (configCopy.writeConfig.format == MSDataFile::Format_DuckDB)
+                    MSDataFile::write(msd, outputFilename, configCopy.writeConfig, pILR);
+                else
+                    writeAtomically(msd, outputFilename, configCopy.writeConfig, pILR);
             }
         }
         catch (user_error&)

@@ -1,0 +1,196 @@
+//
+// $Id$
+//
+//
+// Original author: William Kumler <wkumler .@. uw.edu>
+//
+// Copyright 2026 William Kumler
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+
+
+#include "pwiz/utility/misc/unit.hpp"
+#include "pwiz/utility/misc/Filesystem.hpp"
+#include "pwiz/utility/misc/Std.hpp"
+
+#ifdef WITHOUT_DUCKDB
+
+int main(int argc, char* argv[])
+{
+    TEST_PROLOG(argc, argv)
+    TEST_EPILOG
+}
+
+#else // WITHOUT_DUCKDB
+
+#include "Serializer_DuckDB.hpp"
+#include "examples.hpp"
+#include "duckdb.h"
+
+using namespace pwiz::util;
+using namespace pwiz::cv;
+using namespace pwiz::msdata;
+
+
+ostream* os_ = 0;
+
+
+/// reads the first value of a query result from a DuckDB database (as a string, or "NULL")
+string queryValue(const string& dbFilename, const string& sql)
+{
+    duckdb_database db;
+    duckdb_connection con;
+    unit_assert(duckdb_open(dbFilename.c_str(), &db) == DuckDBSuccess);
+    unit_assert(duckdb_connect(db, &con) == DuckDBSuccess);
+
+    duckdb_result result;
+    bool ok = duckdb_query(con, sql.c_str(), &result) == DuckDBSuccess;
+    string value = !ok ? string("ERROR: ") + duckdb_result_error(&result) :
+                   duckdb_value_is_null(&result, 0, 0) ? "NULL" : "";
+    if (value.empty())
+    {
+        char* str = duckdb_value_varchar(&result, 0, 0);
+        value = str;
+        duckdb_free(str);
+    }
+    duckdb_destroy_result(&result);
+    duckdb_disconnect(&con);
+    duckdb_close(&db);
+
+    if (os_) *os_ << sql << " -> " << value << endl;
+    return value;
+}
+
+int64_t queryCount(const string& dbFilename, const string& sql)
+{
+    return lexical_cast<int64_t>(queryValue(dbFilename, sql));
+}
+
+
+/// counts the data points in the spectra of the given MS level
+size_t countPoints(const MSData& msd, int msLevel)
+{
+    size_t count = 0;
+    SpectrumList& sl = *msd.run.spectrumListPtr;
+    for (size_t i = 0; i < sl.size(); ++i)
+    {
+        SpectrumPtr s = sl.spectrum(i, true);
+        if (s->cvParam(MS_ms_level).valueAs<int>() == msLevel)
+            count += s->getMZArray() ? s->getMZArray()->data.size() : 0;
+    }
+    return count;
+}
+
+
+void write(const MSData& msd, const string& dbFilename, const string& runName, bool replaceRuns = false)
+{
+    MSDataFile::WriteConfig config(MSDataFile::Format_DuckDB);
+    config.inputFilename = runName;
+    config.duckdbReplaceRuns = replaceRuns;
+    config.useWorkerThreads = false;
+    Serializer_DuckDB serializer(config);
+    serializer.write(dbFilename, msd);
+}
+
+
+/// a spectrum list that fails partway through, to test that a failed run is rolled back
+struct FailingSpectrumList : public SpectrumListSimple
+{
+    virtual SpectrumPtr spectrum(size_t index, bool getBinaryData) const
+    {
+        if (index > 0)
+            throw runtime_error("simulated read failure");
+        return SpectrumListSimple::spectrum(index, getBinaryData);
+    }
+};
+
+
+void test(const string& dbFilename)
+{
+    MSData tiny;
+    examples::initializeTiny(tiny);
+    int64_t ms1Points = countPoints(tiny, 1), ms2Points = countPoints(tiny, 2);
+    int64_t scanCount = tiny.run.spectrumListPtr->size();
+    unit_assert(ms1Points > 0 && ms2Points > 0);
+
+    // first run creates the database
+    write(tiny, dbFilename, "tiny1.mzML");
+    unit_assert_operator_equal(ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
+    unit_assert_operator_equal(ms2Points, queryCount(dbFilename, "SELECT count(*) FROM MS2"));
+    unit_assert_operator_equal(scanCount, queryCount(dbFilename, "SELECT count(*) FROM scan_info"));
+    unit_assert_operator_equal((int64_t) 1, queryCount(dbFilename, "SELECT count(*) FROM file_info"));
+    unit_assert_operator_equal("tiny1.mzML", queryValue(dbFilename, "SELECT DISTINCT filename FROM MS1"));
+
+    // spot-check values against the tiny example: the first MS1 scan starts at 5.890500 minutes,
+    // its m/z values are 0..14 with intensities 15..1, and the first MS2 scan's (index 1) isolation window target is m/z 445.3
+    unit_assert_operator_equal("5.8905", queryValue(dbFilename, "SELECT round(rt, 6) FROM MS1 WHERE scan_idx = 0 LIMIT 1"));
+    unit_assert_operator_equal("15.0", queryValue(dbFilename, "SELECT \"int\" FROM MS1 WHERE scan_idx = 0 AND mz = 0"));
+    unit_assert_operator_equal("445.3", queryValue(dbFilename, "SELECT DISTINCT premz FROM MS2 WHERE scan_idx = 1"));
+    unit_assert_operator_equal("120.0", queryValue(dbFilename, "SELECT tic FROM scan_info WHERE scan_idx = 0"));
+    unit_assert_operator_equal("positive", queryValue(dbFilename, "SELECT polarity FROM scan_info WHERE scan_idx = 0"));
+    unit_assert_operator_equal(scanCount, queryCount(dbFilename, "SELECT n_scans FROM file_info"));
+
+    // a second run is appended
+    write(tiny, dbFilename, "tiny2.mzML");
+    unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
+    unit_assert_operator_equal((int64_t) 2, queryCount(dbFilename, "SELECT count(*) FROM file_info"));
+
+    // writing a run that is already in the database is an error and changes nothing
+    unit_assert_throws(write(tiny, dbFilename, "tiny1.mzML"), user_error);
+    unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
+    unit_assert_operator_equal((int64_t) 2, queryCount(dbFilename, "SELECT count(*) FROM file_info"));
+
+    // ...unless replacing runs
+    write(tiny, dbFilename, "tiny1.mzML", true);
+    unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
+    unit_assert_operator_equal(2 * scanCount, queryCount(dbFilename, "SELECT count(*) FROM scan_info"));
+    unit_assert_operator_equal((int64_t) 2, queryCount(dbFilename, "SELECT count(*) FROM file_info"));
+
+    // a run that fails partway through leaves no rows behind
+    MSData failing;
+    examples::initializeTiny(failing);
+    shared_ptr<FailingSpectrumList> failingList(new FailingSpectrumList);
+    failingList->spectra = boost::dynamic_pointer_cast<SpectrumListSimple>(tiny.run.spectrumListPtr)->spectra;
+    failing.run.spectrumListPtr = failingList;
+    unit_assert_throws_what(write(failing, dbFilename, "failing.mzML"), runtime_error, "simulated read failure");
+    unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, "SELECT count(*) FROM scan_info WHERE filename = 'failing.mzML'"));
+    unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
+}
+
+
+int main(int argc, char* argv[])
+{
+    TEST_PROLOG(argc, argv)
+
+    string dbFilename = (bfs::temp_directory_path() / bfs::unique_path("Serializer_DuckDB_Test-%%%%%%.duckdb")).string();
+    try
+    {
+        if (argc>1 && !strcmp(argv[1],"-v")) os_ = &cout;
+        test(dbFilename);
+    }
+    catch (exception& e)
+    {
+        TEST_FAILED(e.what())
+    }
+    catch (...)
+    {
+        TEST_FAILED("Caught unknown exception.")
+    }
+    bfs::remove(dbFilename);
+    bfs::remove(dbFilename + ".wal");
+
+    TEST_EPILOG
+}
+
+#endif // WITHOUT_DUCKDB
