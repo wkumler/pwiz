@@ -216,15 +216,18 @@ rule duckdb-library-path ( properties * )
     }
 }
 
-# on Windows, duckdb.dll must be installed next to the executables that write DuckDB output
+# DuckDB's license (MIT) must accompany the executables that include it, and on Windows
+# duckdb.dll must be installed next to the executables that write DuckDB output
 rule install-duckdb-dependencies ( properties * )
 {
-    if <toolset>msvc in $(properties) && [ duckdb-requirements $(properties) ]
+    if [ duckdb-requirements $(properties) ]
     {
         local location = [ feature.get-values <location> : $(properties) ] ;
         if $(location) { location = [ string.join <location> [ path.make $(location[1]) ] ] ; }
         location ?= [ install-location $(properties) ] ;
-        return <dependency>$(PWIZ_LIBRARIES_PATH)/duckdb//install_duckdb_dll/$(location) ;
+        local dependencies = <dependency>$(PWIZ_LIBRARIES_PATH)/duckdb//install_duckdb_license/$(location) ;
+        if <toolset>msvc in $(properties) { dependencies += <dependency>$(PWIZ_LIBRARIES_PATH)/duckdb//install_duckdb_dll/$(location) ; }
+        return $(dependencies) ;
     }
 }
 

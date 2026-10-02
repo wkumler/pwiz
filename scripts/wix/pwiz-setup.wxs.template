@@ -137,9 +137,10 @@
                     <Component Feature="MainFeature"><File Source="msvc-release\ThermoRawMetaDump.exe" KeyPath="yes"/></Component>
                     <Component Feature="MainFeature"><File Source="msvc-release\txt2mzml.exe" KeyPath="yes"/></Component>
 
-                    <!-- DuckDB library for msconvert DuckDB output (only bundled in 64-bit builds) -->
+                    <!-- DuckDB library and its license for msconvert DuckDB output (only bundled in 64-bit builds) -->
                     <?if $(var.AddressModel)=64 ?>
                     <Component Feature="MainFeature"><File Source="msvc-release\duckdb.dll" KeyPath="yes"/></Component>
+                    <Component Feature="MainFeature"><File Source="msvc-release\LICENSE.DuckDB" KeyPath="yes"/></Component>
                     <?endif?>
 
                     __VENDOR_DLLS__

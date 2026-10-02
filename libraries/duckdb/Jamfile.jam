@@ -76,3 +76,7 @@ alias duckdb
 
 install install_duckdb_dll : $(DUCKDB_WINDOWS_PATH)/duckdb.dll ;
 explicit install_duckdb_dll ;
+
+# shipped next to the executables, named like the vendor EULA.* files
+install install_duckdb_license : LICENSE : <name>LICENSE.DuckDB ;
+explicit install_duckdb_license ;
