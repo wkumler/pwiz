@@ -29,6 +29,13 @@
 #include "pwiz/utility/misc/Std.hpp"
 #include "duckdb.h"
 
+#ifdef _MSC_VER
+#ifndef NOMINMAX
+# define NOMINMAX
+#endif
+#include <windows.h> // for LoadLibraryA: duckdb.dll is delay-loaded (see libraries/duckdb/Jamfile.jam)
+#endif
+
 
 namespace pwiz {
 namespace msdata {
@@ -219,6 +226,12 @@ void Serializer_DuckDB::Impl::write(const string& filename, const MSData& msd,
     string runName = config_.inputFilename.empty() ? msd.run.id : config_.inputFilename;
     if (runName.empty())
         throw runtime_error("[Serializer_DuckDB::write()] no input filename or run id to identify the run by");
+
+#ifdef _MSC_VER
+    // load the delay-loaded duckdb.dll now, so a missing DLL is a clear error instead of a crash on the first DuckDB call
+    if (!LoadLibraryA("duckdb.dll"))
+        throw runtime_error("[Serializer_DuckDB::write()] unable to load duckdb.dll; it must be in the same directory as the executable");
+#endif
 
     Database db;
     char* openError = nullptr;

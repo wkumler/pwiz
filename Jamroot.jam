@@ -209,6 +209,23 @@ rule duckdb-library-path ( properties * )
     {
         return $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-linux-amd64 ;
     }
+    # MSVC builds are 32-bit unless address-model=64 is given, and only a 64-bit DuckDB is bundled
+    if ( <address-model>64 in $(properties) ) && ( <toolset>msvc in $(properties) )
+    {
+        return $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-windows-amd64 ;
+    }
+}
+
+# on Windows, duckdb.dll must be installed next to the executables that write DuckDB output
+rule install-duckdb-dependencies ( properties * )
+{
+    if <toolset>msvc in $(properties) && [ duckdb-requirements $(properties) ]
+    {
+        local location = [ feature.get-values <location> : $(properties) ] ;
+        if $(location) { location = [ string.join <location> [ path.make $(location[1]) ] ] ; }
+        location ?= [ install-location $(properties) ] ;
+        return <dependency>$(PWIZ_LIBRARIES_PATH)/duckdb//install_duckdb_dll/$(location) ;
+    }
 }
 
 # do we want to skip DuckDB support? (also skipped on platforms without a prebuilt DuckDB library)
@@ -732,12 +749,20 @@ if ( ! --incremental in $(args) ) && ( ! --without-duckdb in $(args) ) && ! [ wi
 {
     local duckdb-platform ;
     if [ MATCH (LINUX) : $(.os) ] && $(.platform) = X86_64 { duckdb-platform = linux-amd64 ; }
+    if [ modules.peek : NT ] { duckdb-platform = windows-amd64 ; }
 
     local duckdb-dir = duckdb-$(DUCKDB_VERSION)-$(duckdb-platform) ;
     if $(duckdb-platform) && ! [ path.exists $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir) ]
     {
         echo "Extracting DuckDB $(DUCKDB_VERSION)..." ;
-        SHELL "$(PWIZ_LIBRARIES_PATH)/7zz x -aoa -bso0 -bsp0 -o$(PWIZ_LIBRARIES_PATH)/duckdb $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir).7z" ;
+        if [ modules.peek : NT ]
+        {
+            SHELL "$(PWIZ_LIBRARIES_PATH)\\7za.exe x -aoa -o$(PWIZ_LIBRARIES_PATH)\\duckdb $(PWIZ_LIBRARIES_PATH)\\duckdb\\$(duckdb-dir).7z" ;
+        }
+        else
+        {
+            SHELL "$(PWIZ_LIBRARIES_PATH)/7zz x -aoa -bso0 -bsp0 -o$(PWIZ_LIBRARIES_PATH)/duckdb $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir).7z" ;
+        }
     }
 }
 
@@ -942,6 +967,7 @@ install executables
       <conditional>@install-location
       <conditional>@install-identdata-dependencies
       <conditional>@install-vendor-api-dependencies
+      <conditional>@install-duckdb-dependencies
       <conditional>@dotNET-dependencies
       <conditional>@gcc-install-dll-path
       <toolset>msvc:<dependency>install-msvc-runtime-dlls
@@ -954,6 +980,7 @@ install gui_tools
       <conditional>@install-location
       <conditional>@install-identdata-dependencies
       <conditional>@install-vendor-api-dependencies
+      <conditional>@install-duckdb-dependencies
       <conditional>@dotNET-dependencies
       <conditional>@gcc-install-dll-path
       <toolset>msvc:<dependency>install-msvc-runtime-dlls
@@ -973,6 +1000,7 @@ install msconvert
       <conditional>@install-location
       <conditional>@install-identdata-dependencies
       <conditional>@install-vendor-api-dependencies
+      <conditional>@install-duckdb-dependencies
       <conditional>@gcc-install-dll-path
       <toolset>msvc:<dependency>install-msvc-runtime-dlls
     ;

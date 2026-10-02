@@ -4,15 +4,17 @@
 #
 # DuckDB (https://duckdb.org) is distributed under the MIT license; see LICENSE in this directory.
 #
-# The archives here contain the unmodified official prebuilt static libraries from
-# https://github.com/duckdb/duckdb/releases (static-libs-<platform>.zip), repackaged
-# into a directory named duckdb-<version>-<platform>. Jamroot extracts the archive for
-# the current platform; ProteoWizard only uses DuckDB's C API (duckdb.h).
+# The archives here contain unmodified official prebuilt binaries from
+# https://github.com/duckdb/duckdb/releases, repackaged into a directory named duckdb-<version>-<platform>:
+#   linux-amd64:   static libraries (static-libs-linux-amd64.zip)
+#   windows-amd64: duckdb.dll and its import library (libduckdb-windows-amd64.zip)
+# Jamroot extracts the archive for the current platform; ProteoWizard only uses DuckDB's C API (duckdb.h).
 #
-# To update DuckDB: add the new archives, then change .duckdb-version in Jamroot.jam.
+# To update DuckDB: add the new archives, then change DUCKDB_VERSION in Jamroot.jam.
 #
 
 path-constant DUCKDB_LINUX_PATH : duckdb-$(DUCKDB_VERSION)-linux-amd64 ;
+path-constant DUCKDB_WINDOWS_PATH : duckdb-$(DUCKDB_VERSION)-windows-amd64 ;
 
 # the prebuilt extension loader references every bundled extension, so all of these are needed
 local duckdb-libs =
@@ -42,15 +44,35 @@ local duckdb-libs =
 
 for local l in $(duckdb-libs)
 {
-    searched-lib $(l) : : <name>$(l) <toolset>gcc:<search>$(DUCKDB_LINUX_PATH) <link>static ;
+    searched-lib $(l) : : <name>$(l) <search>$(DUCKDB_LINUX_PATH) <link>static ;
 }
 
 alias duckdb
     : # sources
         $(duckdb-libs)
     : # requirements
+        <toolset>gcc
     : # default-build
     : # usage-requirements
-        <toolset>gcc:<include>$(DUCKDB_LINUX_PATH)
-        <toolset>gcc:<linkflags>-ldl
+        <include>$(DUCKDB_LINUX_PATH)
+        <linkflags>-ldl
     ;
+
+# On Windows duckdb.dll is delay-loaded, so the many executables that link pwiz_data_msdata
+# only need duckdb.dll present when they actually write DuckDB output.
+searched-lib duckdb_import : : <name>duckdb <search>$(DUCKDB_WINDOWS_PATH) ;
+
+alias duckdb
+    : # sources
+        duckdb_import
+    : # requirements
+        <toolset>msvc
+    : # default-build
+    : # usage-requirements
+        <include>$(DUCKDB_WINDOWS_PATH)
+        "<linkflags>/DELAYLOAD:duckdb.dll"
+        <linkflags>delayimp.lib
+    ;
+
+install install_duckdb_dll : $(DUCKDB_WINDOWS_PATH)/duckdb.dll ;
+explicit install_duckdb_dll ;
