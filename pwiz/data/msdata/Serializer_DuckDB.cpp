@@ -2,7 +2,8 @@
 // $Id$
 //
 //
-// Original author: William Kumler <wkumler .@. uw.edu>
+// Original author: William Kumler <wkumler .at. uw.edu>
+// AI assistance: Claude Code (Claude Opus 5.5) <noreply .at. anthropic.com>
 //
 // Copyright 2026 William Kumler
 //
@@ -106,16 +107,39 @@ class Appender
     void appendNull() { check(duckdb_append_null(appender_)); }
 
     template <typename T>
-    void append(const boost::optional<T>& value) { if (value) append(*value); else appendNull(); }
+    void append(const boost::optional<T>& value)
+    {
+        if (value)
+            append(*value);
+        else
+            appendNull();
+    }
+
+    /// appends NULL for an empty string
+    void appendOrNull(const string& value)
+    {
+        if (value.empty())
+            appendNull();
+        else
+            append(value);
+    }
 
     void endRow() { check(duckdb_appender_end_row(appender_)); }
 
     /// flushes all rows to the table; must be called before committing
-    void close() { if (duckdb_appender_close(appender_) == DuckDBError) throwError("writing rows"); }
+    void close()
+    {
+        if (duckdb_appender_close(appender_) == DuckDBError)
+            throwError("writing rows");
+    }
 
     private:
 
-    void check(duckdb_state state) { if (state == DuckDBError) throwError("appending row"); }
+    void check(duckdb_state state)
+    {
+        if (state == DuckDBError)
+            throwError("appending row");
+    }
 
     void throwError(const string& action)
     {
@@ -171,7 +195,8 @@ string instrumentModel(const MSData& msd)
 {
     for (const InstrumentConfigurationPtr& ic : msd.instrumentConfigurationPtrs)
     {
-        if (!ic) continue;
+        if (!ic)
+            continue;
         CVParam model = ic->cvParamChild(MS_instrument_model);
         if (!model.empty() && model.cvid != MS_instrument_model)
             return model.name();
@@ -187,7 +212,8 @@ string commandLineArgs(const MSData& msd)
 {
     for (const DataProcessingPtr& dp : msd.allDataProcessingPtrs())
     {
-        if (!dp) continue;
+        if (!dp)
+            continue;
         for (const ProcessingMethod& pm : dp->processingMethods)
         {
             CVParam args = pm.cvParam(MS_command_line_parameters);
@@ -320,12 +346,16 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
         }
 
         boost::optional<string> polarity;
-        if (s->hasCVParam(MS_positive_scan)) polarity = string("positive");
-        else if (s->hasCVParam(MS_negative_scan)) polarity = string("negative");
+        if (s->hasCVParam(MS_positive_scan))
+            polarity = string("positive");
+        else if (s->hasCVParam(MS_negative_scan))
+            polarity = string("negative");
 
         boost::optional<bool> centroided;
-        if (s->hasCVParam(MS_centroid_spectrum)) centroided = true;
-        else if (s->hasCVParam(MS_profile_spectrum)) centroided = false;
+        if (s->hasCVParam(MS_centroid_spectrum))
+            centroided = true;
+        else if (s->hasCVParam(MS_profile_spectrum))
+            centroided = false;
 
         boost::optional<double> premz, voltage;
         if (msLevel && *msLevel > 1 && !s->precursors.empty())
@@ -387,11 +417,10 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
     fileInfo.append(rtStart);
     fileInfo.append(rtEnd);
 
-    string instrument = instrumentModel(msd), args = commandLineArgs(msd);
-    if (instrument.empty()) fileInfo.appendNull(); else fileInfo.append(instrument);
-    if (msd.run.startTimeStamp.empty()) fileInfo.appendNull(); else fileInfo.append(msd.run.startTimeStamp);
+    fileInfo.appendOrNull(instrumentModel(msd));
+    fileInfo.appendOrNull(msd.run.startTimeStamp);
     fileInfo.append(pwiz::Version::str());
-    if (args.empty()) fileInfo.appendNull(); else fileInfo.append(args);
+    fileInfo.appendOrNull(commandLineArgs(msd));
     fileInfo.endRow();
     fileInfo.close();
 }

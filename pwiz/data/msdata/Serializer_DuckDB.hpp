@@ -2,7 +2,8 @@
 // $Id$
 //
 //
-// Original author: William Kumler <wkumler .@. uw.edu>
+// Original author: William Kumler <wkumler .at. uw.edu>
+// AI assistance: Claude Code (Claude Opus 5.5) <noreply .at. anthropic.com>
 //
 // Copyright 2026 William Kumler
 //

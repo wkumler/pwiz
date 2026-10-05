@@ -11,6 +11,7 @@ Core code and libraries are under the Apache open source license; the vendor lib
 * reference implementation of HUPO-PSI mzML standard mass spectrometry data format
 * supports HUPO-PSI mzIdentML 1.1 standard mass spectrometry analysis format
 * supports reading directly from many vendor raw data formats (on Windows)
+* writes whole LC-MS batches to a single DuckDB database for SQL queries (`msconvert --duckdb`; 64-bit Windows and Linux)
 * modern C++ techniques and design principles
 * cross-platform with native compilers (MSVC on Windows, gcc on Linux, darwin on OSX)
 * modular design, for testability and extensibility

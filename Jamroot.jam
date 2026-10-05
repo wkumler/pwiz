@@ -51,7 +51,7 @@ ECHO
 #   --without-mz5           Build without mz5 support
 #   --without-mzmlb         Build without mzMLb support
 #   --without-duckdb        Build without DuckDB output support
-#   --without-agilent      Build without Agilent support
+#   --without-agilent       Build without Agilent support
 #   --without-bruker        Build without Bruker support
 #   --without-sciex         Build without Sciex support
 #   --without-shimadzu      Build without Shimadzu support
@@ -504,7 +504,7 @@ project pwiz
         <conditional>@static-with-fpic
         
         # mz5 support?
-        <conditional>@without-mz5
+        <conditional>@without-mz5 
 
         # DuckDB support?
         <conditional>@without-duckdb

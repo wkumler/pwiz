@@ -203,6 +203,8 @@
     <ClCompile Include="pwiz\data\msdata\References.cpp" />
     <ClCompile Include="pwiz\data\msdata\ReferencesTest.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_DTA.cpp" />
+    <ClCompile Include="pwiz\data\msdata\Serializer_DuckDB.cpp" />
+    <ClCompile Include="pwiz\data\msdata\Serializer_DuckDB_Test.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_MGF.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_MGF_Test.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_mzML.cpp" />
@@ -824,6 +826,7 @@
     <ClInclude Include="pwiz\data\msdata\Reader.hpp" />
     <ClInclude Include="pwiz\data\msdata\References.hpp" />
     <ClInclude Include="pwiz\data\msdata\SHA1OutputObserver.hpp" />
+    <ClInclude Include="pwiz\data\msdata\Serializer_DuckDB.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_MGF.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_mzML.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_mzXML.hpp" />
