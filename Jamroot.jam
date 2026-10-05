@@ -203,16 +203,22 @@ rule without-mzmlb ( properties * )
 constant DUCKDB_VERSION : 1.5.6 ;
 
 # returns the directory of the prebuilt DuckDB library for the target platform, or nothing if there isn't one
+# (or if it hasn't been extracted, e.g. in a source tree that doesn't include libraries/duckdb)
 rule duckdb-library-path ( properties * )
 {
+    local path ;
     if ( ! <address-model>32 in $(properties) ) && ( <toolset>gcc in $(properties) ) && [ MATCH (LINUX) : $(.os) ]
     {
-        return $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-linux-amd64 ;
+        path = $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-linux-amd64 ;
     }
     # MSVC builds are 32-bit unless address-model=64 is given, and only a 64-bit DuckDB is bundled
     if ( <address-model>64 in $(properties) ) && ( <toolset>msvc in $(properties) )
     {
-        return $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-windows-amd64 ;
+        path = $(PWIZ_LIBRARIES_PATH)/duckdb/duckdb-$(DUCKDB_VERSION)-windows-amd64 ;
+    }
+    if $(path) && [ path.exists $(path) ]
+    {
+        return $(path) ;
     }
 }
 
@@ -755,7 +761,7 @@ if ( ! --incremental in $(args) ) && ( ! --without-duckdb in $(args) ) && ! [ wi
     if [ modules.peek : NT ] { duckdb-platform = windows-amd64 ; }
 
     local duckdb-dir = duckdb-$(DUCKDB_VERSION)-$(duckdb-platform) ;
-    if $(duckdb-platform) && ! [ path.exists $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir) ]
+    if $(duckdb-platform) && ! [ path.exists $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir) ] && [ path.exists $(PWIZ_LIBRARIES_PATH)/duckdb/$(duckdb-dir).7z ]
     {
         echo "Extracting DuckDB $(DUCKDB_VERSION)..." ;
         if [ modules.peek : NT ]
@@ -1918,6 +1924,7 @@ constant .common-sources :
     $(PWIZ_LIBRARIES_PATH)/SQLite
     $(PWIZ_LIBRARIES_PATH)/Eigen
     $(PWIZ_LIBRARIES_PATH)/CSpline
+    [ path.glob $(PWIZ_LIBRARIES_PATH)/duckdb : Jamfile.jam LICENSE duckdb-*.7z ] # not the extracted directories
     [ path.glob $(PWIZ_LIBRARIES_PATH) : *.bat *.sh *.h *.jam *.dll *.lib *.exe *.cpp libgd*.tar.bz2 libpng*.tar.bz2 freetype*.tar.bz2 zlib*.tar.bz2 zstd*.tar.bz2 hdf5*.tar.bz2 msparser*.7z ]
 
     # include the bcp'd boost tarball as if it was really located at "libraries/boost_*.tar.bz2"
