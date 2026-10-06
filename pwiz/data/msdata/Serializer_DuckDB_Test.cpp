@@ -5,7 +5,7 @@
 // Original author: William Kumler <wkumler .at. uw.edu>
 // AI assistance: Claude Code (Claude Opus 5.5) <noreply .at. anthropic.com>
 //
-// Copyright 2026 William Kumler
+// Copyright 2026 University of Washington - Seattle, WA
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -118,6 +118,9 @@ struct FailingSpectrumList : public SpectrumListSimple
 };
 
 
+void testMultiplexingAndIonMobility(const string& dbFilename);
+
+
 void test(const string& dbFilename)
 {
     MSData tiny;
@@ -142,6 +145,16 @@ void test(const string& dbFilename)
     unit_assert_operator_equal("120.0", queryValue(dbFilename, "SELECT tic FROM scan_info WHERE scan_idx = 0"));
     unit_assert_operator_equal("positive", queryValue(dbFilename, "SELECT polarity FROM scan_info WHERE scan_idx = 0"));
     unit_assert_operator_equal(scanCount, queryCount(dbFilename, "SELECT n_scans FROM file_info"));
+    unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, "SELECT count(ion_mobility) FROM MS1"));
+    unit_assert_operator_equal("NULL", queryValue(dbFilename, "SELECT ion_mobility_type FROM file_info"));
+
+    // the tiny example's chromatograms: "tic" with 15 points and "sic" with 10 points (times in seconds),
+    // the latter with precursor and product isolation window targets 456.7 and 678.9
+    unit_assert_operator_equal((int64_t) 25, queryCount(dbFilename, "SELECT count(*) FROM chroms"));
+    unit_assert_operator_equal("456.7", queryValue(dbFilename, "SELECT DISTINCT target_mz FROM chroms WHERE chrom_type = 'sic'"));
+    unit_assert_operator_equal("678.9", queryValue(dbFilename, "SELECT DISTINCT product_mz FROM chroms WHERE chrom_type = 'sic'"));
+    unit_assert_operator_equal("0.15", queryValue(dbFilename, "SELECT rt FROM chroms WHERE chrom_type = 'sic' AND \"int\" = 1"));
+    unit_assert_operator_equal("NULL", queryValue(dbFilename, "SELECT DISTINCT target_mz FROM chroms WHERE chrom_type = 'tic'"));
 
     // a second run is appended
     write(tiny, dbFilename, "tiny2.mzML");
@@ -157,6 +170,7 @@ void test(const string& dbFilename)
     write(tiny, dbFilename, "tiny1.mzML", true);
     unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
     unit_assert_operator_equal(2 * scanCount, queryCount(dbFilename, "SELECT count(*) FROM scan_info"));
+    unit_assert_operator_equal((int64_t) 50, queryCount(dbFilename, "SELECT count(*) FROM chroms"));
     unit_assert_operator_equal((int64_t) 2, queryCount(dbFilename, "SELECT count(*) FROM file_info"));
 
     // a run that fails partway through leaves no rows behind
@@ -167,7 +181,49 @@ void test(const string& dbFilename)
     failing.run.spectrumListPtr = failingList;
     unit_assert_throws_what(write(failing, dbFilename, "failing.mzML"), runtime_error, "simulated read failure");
     unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, "SELECT count(*) FROM scan_info WHERE filename = 'failing.mzML'"));
+    unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, "SELECT count(*) FROM chroms WHERE filename = 'failing.mzML'"));
     unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
+
+    testMultiplexingAndIonMobility(dbFilename);
+}
+
+
+/// a multiplexed MS2 spectrum gets rows for each precursor; ion mobility comes from a spectrum's single value or its array
+void testMultiplexingAndIonMobility(const string& dbFilename)
+{
+    MSData msd;
+    examples::initializeTiny(msd);
+    vector<SpectrumPtr>& spectra = boost::dynamic_pointer_cast<SpectrumListSimple>(msd.run.spectrumListPtr)->spectra;
+
+    // spectrum 1 (10 points, precursor 445.3) gets a second precursor
+    Precursor secondPrecursor;
+    secondPrecursor.isolationWindow.set(MS_isolation_window_target_m_z, 600.5, MS_m_z);
+    spectra[1]->precursors.push_back(secondPrecursor);
+
+    // spectrum 0 (MS1, 15 points) gets a single inverse reduced ion mobility value
+    spectra[0]->scanList.scans[0].set(MS_inverse_reduced_ion_mobility, 0.85, MS_volt_second_per_square_centimeter);
+
+    // spectrum 3 (MS2, 10 points) gets an ion mobility array of 0, 0.5, ..., 4.5 ms
+    BinaryDataArrayPtr ionMobilityArray(new BinaryDataArray);
+    ionMobilityArray->set(MS_raw_ion_mobility_array, "", UO_millisecond);
+    for (int i = 0; i < 10; ++i)
+        ionMobilityArray->data.push_back(i * 0.5);
+    spectra[3]->binaryDataArrayPtrs.push_back(ionMobilityArray);
+
+    write(msd, dbFilename, "variants.mzML");
+    const string run = " FROM MS2 WHERE filename = 'variants.mzML' AND scan_idx = ";
+    unit_assert_operator_equal((int64_t) 20, queryCount(dbFilename, "SELECT count(*)" + run + "1"));
+    unit_assert_operator_equal((int64_t) 2, queryCount(dbFilename, "SELECT count(DISTINCT premz)" + run + "1"));
+    unit_assert_operator_equal("600.5", queryValue(dbFilename, "SELECT max(premz)" + run + "1"));
+    unit_assert_operator_equal("445.3", queryValue(dbFilename, "SELECT premz FROM scan_info WHERE filename = 'variants.mzML' AND scan_idx = 1"));
+
+    unit_assert_operator_equal((int64_t) 15, queryCount(dbFilename, "SELECT count(*) FROM MS1 WHERE filename = 'variants.mzML' AND ion_mobility = 0.85"));
+    unit_assert_operator_equal("0.85", queryValue(dbFilename, "SELECT ion_mobility FROM scan_info WHERE filename = 'variants.mzML' AND scan_idx = 0"));
+    unit_assert_operator_equal((int64_t) 10, queryCount(dbFilename, "SELECT count(DISTINCT ion_mobility)" + run + "3"));
+    unit_assert_operator_equal("4.5", queryValue(dbFilename, "SELECT max(ion_mobility)" + run + "3"));
+    unit_assert_operator_equal("NULL", queryValue(dbFilename, "SELECT ion_mobility FROM scan_info WHERE filename = 'variants.mzML' AND scan_idx = 3"));
+    unit_assert_operator_equal("inverse reduced ion mobility (volt-second per square centimeter)",
+                               queryValue(dbFilename, "SELECT ion_mobility_type FROM file_info WHERE filename = 'variants.mzML'"));
 }
 
 

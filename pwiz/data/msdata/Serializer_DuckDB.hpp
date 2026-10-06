@@ -5,7 +5,7 @@
 // Original author: William Kumler <wkumler .at. uw.edu>
 // AI assistance: Claude Code (Claude Opus 5.5) <noreply .at. anthropic.com>
 //
-// Copyright 2026 William Kumler
+// Copyright 2026 University of Washington - Seattle, WA
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -38,16 +38,20 @@ namespace msdata {
 ///
 /// Unlike the other formats, a DuckDB database is meant to hold every run of an LC-MS batch:
 /// each run is appended to the database (created if necessary) in a single transaction, and
-/// all rows are keyed by the run's input filename. The database has four tables:
+/// all rows are keyed by the run's input filename. The database has five tables:
 ///
-///   MS1       (filename, scan_idx, rt, mz, int)
-///   MS2       (filename, scan_idx, rt, premz, fragmz, int, voltage)
+///   MS1       (filename, scan_idx, rt, mz, int, ion_mobility)
+///   MS2       (filename, scan_idx, rt, premz, fragmz, int, voltage, ion_mobility)
 ///   scan_info (filename, scan_idx, native_id, ms_level, rt, polarity, centroided,
-///              premz, voltage, tic, bpc, min_mz, max_mz)
+///              premz, voltage, tic, bpc, min_mz, max_mz, ion_mobility)
+///   chroms    (filename, chrom_type, chrom_index, target_mz, product_mz, rt, int)
 ///   file_info (filename, n_scans, rt_start, rt_end, instrument, start_timestamp,
-///              msconvert_version, filters)
+///              msconvert_version, msconvert_args, ion_mobility_type)
 ///
-/// Retention times are in minutes and scan_idx is the 0-based spectrum index.
+/// Retention times are in minutes and scan_idx is the 0-based spectrum index. A multiplexed MS2
+/// spectrum's rows are repeated for each of its precursors. ion_mobility is NULL for data without
+/// ion mobility; its kind and units (e.g. drift time in milliseconds) are in file_info.ion_mobility_type.
+/// chroms follows RaMS: one row per chromatogram point, with the chromatogram id as chrom_type.
 class PWIZ_API_DECL Serializer_DuckDB
 {
     public:

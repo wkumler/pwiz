@@ -5,7 +5,7 @@
 // Original author: William Kumler <wkumler .at. uw.edu>
 // AI assistance: Claude Code (Claude Opus 5.5) <noreply .at. anthropic.com>
 //
-// Copyright 2026 William Kumler
+// Copyright 2026 University of Washington - Seattle, WA
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -49,14 +49,18 @@ namespace {
 
 
 const char* createTablesSql =
-    "CREATE TABLE IF NOT EXISTS MS1 (filename VARCHAR, scan_idx INTEGER, rt DOUBLE, mz DOUBLE, \"int\" DOUBLE);"
-    "CREATE TABLE IF NOT EXISTS MS2 (filename VARCHAR, scan_idx INTEGER, rt DOUBLE, premz DOUBLE, fragmz DOUBLE, \"int\" DOUBLE, voltage DOUBLE);"
+    "CREATE TABLE IF NOT EXISTS MS1 (filename VARCHAR, scan_idx INTEGER, rt DOUBLE, mz DOUBLE, \"int\" DOUBLE, ion_mobility DOUBLE);"
+    "CREATE TABLE IF NOT EXISTS MS2 (filename VARCHAR, scan_idx INTEGER, rt DOUBLE, premz DOUBLE, fragmz DOUBLE, \"int\" DOUBLE, voltage DOUBLE,"
+    "    ion_mobility DOUBLE);"
     "CREATE TABLE IF NOT EXISTS scan_info (filename VARCHAR, scan_idx INTEGER, native_id VARCHAR, ms_level INTEGER, rt DOUBLE,"
-    "    polarity VARCHAR, centroided BOOLEAN, premz DOUBLE, voltage DOUBLE, tic DOUBLE, bpc DOUBLE, min_mz DOUBLE, max_mz DOUBLE);"
+    "    polarity VARCHAR, centroided BOOLEAN, premz DOUBLE, voltage DOUBLE, tic DOUBLE, bpc DOUBLE, min_mz DOUBLE, max_mz DOUBLE,"
+    "    ion_mobility DOUBLE);"
+    "CREATE TABLE IF NOT EXISTS chroms (filename VARCHAR, chrom_type VARCHAR, chrom_index INTEGER, target_mz DOUBLE, product_mz DOUBLE,"
+    "    rt DOUBLE, \"int\" DOUBLE);"
     "CREATE TABLE IF NOT EXISTS file_info (filename VARCHAR, n_scans INTEGER, rt_start DOUBLE, rt_end DOUBLE, instrument VARCHAR,"
-    "    start_timestamp VARCHAR, msconvert_version VARCHAR, msconvert_args VARCHAR);";
+    "    start_timestamp VARCHAR, msconvert_version VARCHAR, msconvert_args VARCHAR, ion_mobility_type VARCHAR);";
 
-const char* tableNames[] = {"MS1", "MS2", "scan_info", "file_info"};
+const char* tableNames[] = {"MS1", "MS2", "scan_info", "chroms", "file_info"};
 
 
 // RAII owners for DuckDB C API handles
@@ -225,6 +229,54 @@ string commandLineArgs(const MSData& msd)
 }
 
 
+/// a precursor's m/z (its isolation window target, or else its first selected ion) and collision energy
+struct PrecursorInfo
+{
+    boost::optional<double> mz, voltage;
+};
+
+PrecursorInfo precursorInfo(const Precursor& precursor)
+{
+    PrecursorInfo info;
+    info.mz = optionalValue<double>(precursor.isolationWindow.cvParam(MS_isolation_window_target_m_z));
+    if (!info.mz && !precursor.selectedIons.empty())
+        info.mz = optionalValue<double>(precursor.selectedIons[0].cvParam(MS_selected_ion_m_z));
+    info.voltage = optionalValue<double>(precursor.activation.cvParam(MS_collision_energy));
+    return info;
+}
+
+
+/// a spectrum's single ion mobility value (drift time, inverse reduced ion mobility or FAIMS compensation voltage),
+/// or an empty CVParam if it has none (it may instead have an ion mobility array)
+CVParam spectrumIonMobility(const Spectrum& s)
+{
+    const CVID types[] = {MS_ion_mobility_drift_time, MS_inverse_reduced_ion_mobility, MS_FAIMS_compensation_voltage};
+    for (CVID type : types)
+    {
+        CVParam param = s.scanList.empty() ? CVParam() : s.scanList.scans[0].cvParam(type);
+        if (param.empty())
+            param = s.cvParam(type);
+        if (!param.empty())
+            return param;
+    }
+    return CVParam();
+}
+
+
+/// describes an ion mobility value or array, e.g. "inverse reduced ion mobility (volt-second per square centimeter)"
+string ionMobilityType(const CVParam& param)
+{
+    return param.unitsName().empty() ? param.name() : param.name() + " (" + param.unitsName() + ")";
+}
+
+
+/// the factor that converts a time array in the given units to minutes, or 0 if the units are not a time unit
+double minutesPerTimeUnit(CVID units)
+{
+    return CVParam(MS_scan_start_time, 1.0, units).timeInSeconds() / 60.0;
+}
+
+
 } // namespace
 
 
@@ -241,6 +293,8 @@ class Serializer_DuckDB::Impl
 
     void writeRun(duckdb_connection con, const string& runName, const MSData& msd,
                   const IterationListenerRegistry* iterationListenerRegistry) const;
+
+    void writeChromatograms(duckdb_connection con, const string& runName, const MSData& msd) const;
 
     MSDataFile::WriteConfig config_;
 };
@@ -308,6 +362,7 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
 
     int scansWritten = 0;
     boost::optional<double> rtStart, rtEnd;
+    string ionMobilityTypeName; // of the first ion mobility value or array seen in the run
 
     SpectrumList& sl = *msd.run.spectrumListPtr;
     SpectrumWorkerThreads spectrumWorkers(sl, config_.useWorkerThreads, config_.continueOnError);
@@ -357,17 +412,27 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
         else if (s->hasCVParam(MS_profile_spectrum))
             centroided = false;
 
-        boost::optional<double> premz, voltage;
-        if (msLevel && *msLevel > 1 && !s->precursors.empty())
+        // a multiplexed spectrum has several precursors; its MS2 rows are repeated for each of them
+        vector<PrecursorInfo> precursors;
+        if (msLevel && *msLevel > 1)
         {
-            const Precursor& precursor = s->precursors[0];
-            premz = optionalValue<double>(precursor.isolationWindow.cvParam(MS_isolation_window_target_m_z));
-            if (!premz && !precursor.selectedIons.empty())
-                premz = optionalValue<double>(precursor.selectedIons[0].cvParam(MS_selected_ion_m_z));
-            voltage = optionalValue<double>(precursor.activation.cvParam(MS_collision_energy));
+            for (const Precursor& precursor : s->precursors)
+                precursors.push_back(precursorInfo(precursor));
         }
+        if (precursors.empty())
+            precursors.push_back(PrecursorInfo());
 
-        BinaryDataArrayPtr mzArray = s->getMZArray();
+        // ion mobility is either a single value for the spectrum or an array with a value per point
+        CVParam ionMobilityParam = spectrumIonMobility(*s);
+        boost::optional<double> spectrumIonMobilityValue = optionalValue<double>(ionMobilityParam);
+        BinaryDataArrayPtr ionMobilityArray = s->getArrayByCVID(MS_ion_mobility_array, true);
+        if (ionMobilityTypeName.empty() && ionMobilityArray)
+            ionMobilityTypeName = ionMobilityType(ionMobilityArray->cvParamChild(MS_ion_mobility_array));
+        else if (ionMobilityTypeName.empty() && spectrumIonMobilityValue)
+            ionMobilityTypeName = ionMobilityType(ionMobilityParam);
+
+        // the m/z array specifically (getMZArray() also returns the wavelength array of UV spectra)
+        BinaryDataArrayPtr mzArray = s->getArrayByCVID(MS_m_z_array);
         BinaryDataArrayPtr intensityArray = s->getIntensityArray();
         size_t pointCount = mzArray && intensityArray ? min(mzArray->data.size(), intensityArray->data.size()) : 0;
 
@@ -380,24 +445,31 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
             minMz = minMz ? min(*minMz, mz) : mz;
             maxMz = maxMz ? max(*maxMz, mz) : mz;
 
+            boost::optional<double> ionMobility = spectrumIonMobilityValue;
+            if (ionMobilityArray && p < ionMobilityArray->data.size())
+                ionMobility = ionMobilityArray->data[p];
+
             if (msLevel && *msLevel == 1)
             {
                 ms1.append(runName); ms1.append(scanIndex); ms1.append(rt);
-                ms1.append(mz); ms1.append(intensity);
+                ms1.append(mz); ms1.append(intensity); ms1.append(ionMobility);
                 ms1.endRow();
             }
             else if (msLevel && *msLevel == 2)
             {
-                ms2.append(runName); ms2.append(scanIndex); ms2.append(rt); ms2.append(premz);
-                ms2.append(mz); ms2.append(intensity); ms2.append(voltage);
-                ms2.endRow();
+                for (const PrecursorInfo& precursor : precursors)
+                {
+                    ms2.append(runName); ms2.append(scanIndex); ms2.append(rt); ms2.append(precursor.mz);
+                    ms2.append(mz); ms2.append(intensity); ms2.append(precursor.voltage); ms2.append(ionMobility);
+                    ms2.endRow();
+                }
             }
         }
 
         scanInfo.append(runName); scanInfo.append(scanIndex); scanInfo.append(s->id); scanInfo.append(msLevel);
-        scanInfo.append(rt); scanInfo.append(polarity); scanInfo.append(centroided); scanInfo.append(premz);
-        scanInfo.append(voltage); scanInfo.append(tic); scanInfo.append(bpc); scanInfo.append(minMz);
-        scanInfo.append(maxMz);
+        scanInfo.append(rt); scanInfo.append(polarity); scanInfo.append(centroided); scanInfo.append(precursors[0].mz);
+        scanInfo.append(precursors[0].voltage); scanInfo.append(tic); scanInfo.append(bpc); scanInfo.append(minMz);
+        scanInfo.append(maxMz); scanInfo.append(spectrumIonMobilityValue);
         scanInfo.endRow();
         ++scansWritten;
 
@@ -411,6 +483,8 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
     ms2.close();
     scanInfo.close();
 
+    writeChromatograms(con, runName, msd);
+
     Appender fileInfo(con, "file_info");
     fileInfo.append(runName);
     fileInfo.append(scansWritten);
@@ -421,8 +495,48 @@ void Serializer_DuckDB::Impl::writeRun(duckdb_connection con, const string& runN
     fileInfo.appendOrNull(msd.run.startTimeStamp);
     fileInfo.append(pwiz::Version::str());
     fileInfo.appendOrNull(commandLineArgs(msd));
+    fileInfo.appendOrNull(ionMobilityTypeName);
     fileInfo.endRow();
     fileInfo.close();
+}
+
+
+/// writes every chromatogram point (as in RaMS's chroms table: one row per point, with the chromatogram's
+/// id as chrom_type and its precursor and product isolation window targets as target_mz and product_mz)
+void Serializer_DuckDB::Impl::writeChromatograms(duckdb_connection con, const string& runName, const MSData& msd) const
+{
+    Appender chroms(con, "chroms");
+
+    if (msd.run.chromatogramListPtr)
+    {
+        const ChromatogramList& cl = *msd.run.chromatogramListPtr;
+        for (size_t i = 0, end = cl.size(); i < end; ++i)
+        {
+            ChromatogramPtr c = cl.chromatogram(i, true);
+            BinaryDataArrayPtr timeArray = c->getTimeArray();
+            BinaryDataArrayPtr intensityArray = c->getIntensityArray();
+            if (!timeArray || !intensityArray)
+                continue;
+
+            // times are written in minutes; if the time units are unknown, rt is NULL
+            double minutesPerUnit = minutesPerTimeUnit(timeArray->cvParam(MS_time_array).units);
+            boost::optional<double> targetMz = optionalValue<double>(c->precursor.isolationWindow.cvParam(MS_isolation_window_target_m_z));
+            boost::optional<double> productMz = optionalValue<double>(c->product.isolationWindow.cvParam(MS_isolation_window_target_m_z));
+
+            for (size_t p = 0, pointCount = min(timeArray->data.size(), intensityArray->data.size()); p < pointCount; ++p)
+            {
+                boost::optional<double> rt;
+                if (minutesPerUnit > 0)
+                    rt = timeArray->data[p] * minutesPerUnit;
+
+                chroms.append(runName); chroms.append(c->id); chroms.append((int) c->index); chroms.append(targetMz);
+                chroms.append(productMz); chroms.append(rt); chroms.append(intensityArray->data[p]);
+                chroms.endRow();
+            }
+        }
+    }
+
+    chroms.close();
 }
 
 
