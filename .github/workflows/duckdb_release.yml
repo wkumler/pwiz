@@ -1,0 +1,139 @@
+# Builds msconvert with DuckDB and SQLite output for Linux and Windows and, for a v* tag,
+# attaches both archives to a GitHub release.
+#
+# Open-source build only: quickbuild is never given --i-agree-to-the-vendor-licenses,
+# so no vendor libraries are extracted, built or packaged. The "Check package
+# contents" step enforces this by failing on any file outside an allowlist.
+name: msconvert database output release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build on ${{ matrix.config.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - {
+            name: linux,
+            # oldest supported runner, so the binary runs on older glibc versions
+            os: ubuntu-22.04,
+            quickbuild: ./quickbuild.sh,
+            toolset: toolset=gcc,
+            exe: msconvert
+          }
+        - {
+            name: windows,
+            os: windows-latest,
+            quickbuild: ./quickbuild.bat,
+            toolset: toolset=msvc,
+            exe: msconvert.exe
+          }
+    runs-on: ${{ matrix.config.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get number of CPU cores
+        id: cpu-count
+        uses: SimenB/github-actions-cpu-cores@v1
+
+      - name: Build msconvert
+        shell: bash
+        run: |
+          unset JAVA_HOME
+          ${{ matrix.config.quickbuild }} --abbreviate-paths -j${{ steps.cpu-count.outputs.count }} address-model=64 ${{ matrix.config.toolset }} msconvert
+
+      - name: Collect files
+        id: collect
+        shell: bash
+        run: |
+          # quickbuild does not always return a failing exit code, so check that the files exist
+          exe=$(find build-* -maxdepth 2 -name '${{ matrix.config.exe }}' -path '*release*' | head -n 1)
+          test -n "$exe" || { echo "msconvert was not built"; exit 1; }
+          bindir=$(dirname "$exe")
+          test -f "$bindir/LICENSE.DuckDB" || { echo "LICENSE.DuckDB is missing; was DuckDB support built?"; exit 1; }
+
+          version=${GITHUB_REF_NAME//\//-}
+          pkg=msconvert-duckdb-$version-${{ matrix.config.name }}-x86_64
+          mkdir "$pkg"
+          # on Windows this also picks up duckdb.dll and the MSVC runtime DLLs
+          find "$bindir" -maxdepth 1 -type f ! -name '*.pdb' ! -name '*.ilk' -exec cp {} "$pkg"/ \;
+          cp LICENSE "$pkg"/LICENSE.ProteoWizard
+          ls -la "$pkg"
+          echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+
+      - name: Check package contents
+        shell: bash
+        run: |
+          # only msconvert, DuckDB, the MSVC runtime and license files may ship
+          bad=0
+          for f in ${{ steps.collect.outputs.pkg }}/*; do
+            case "$(basename "$f")" in
+              msconvert|msconvert.exe|msconvert.exe.config|msconvert.exe.manifest) ;;
+              duckdb.dll|LICENSE.DuckDB|LICENSE.ProteoWizard) ;;
+              msvcp1*.dll|vcruntime1*.dll|concrt1*.dll|vccorlib1*.dll|vcomp1*.dll) ;;
+              *) echo "unexpected file in package: $f"; bad=1 ;;
+            esac
+          done
+          exit $bad
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          pkg=${{ steps.collect.outputs.pkg }}
+          for format in duckdb sqlite; do
+            "$pkg/${{ matrix.config.exe }}" example_data/small.pwiz.1.1.mzML example_data/tiny.pwiz.1.1.mzML --$format -o smoke --outfile smoke.$format
+            test -s smoke/smoke.$format
+            # a second write of the same run must fail unless --replaceExistingDatabaseRuns is given
+            if "$pkg/${{ matrix.config.exe }}" example_data/tiny.pwiz.1.1.mzML --$format -o smoke --outfile smoke.$format; then
+              echo "duplicate run was not rejected ($format)"
+              exit 1
+            fi
+            "$pkg/${{ matrix.config.exe }}" example_data/tiny.pwiz.1.1.mzML --$format --replaceExistingDatabaseRuns -o smoke --outfile smoke.$format
+          done
+
+      - name: Archive (Linux)
+        if: matrix.config.name == 'linux'
+        shell: bash
+        run: tar -czf ${{ steps.collect.outputs.pkg }}.tar.gz ${{ steps.collect.outputs.pkg }}
+
+      - name: Archive (Windows)
+        if: matrix.config.name == 'windows'
+        shell: pwsh
+        run: Compress-Archive -Path ${{ steps.collect.outputs.pkg }} -DestinationPath ${{ steps.collect.outputs.pkg }}.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.collect.outputs.pkg }}
+          path: |
+            ${{ steps.collect.outputs.pkg }}.tar.gz
+            ${{ steps.collect.outputs.pkg }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes \
+            --notes "msconvert with DuckDB and SQLite output (--duckdb, --sqlite), built from open-source code only. Reads mzML, mzXML, MGF, mz5 and mzMLb. See the README for usage."

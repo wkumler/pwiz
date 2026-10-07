@@ -21,8 +21,8 @@
 //
 
 
-#ifndef _SERIALIZER_DUCKDB_HPP_
-#define _SERIALIZER_DUCKDB_HPP_
+#ifndef _SERIALIZER_SQLITE_HPP_
+#define _SERIALIZER_SQLITE_HPP_
 
 
 #include "MSDataFile.hpp"
@@ -34,19 +34,19 @@ namespace pwiz {
 namespace msdata {
 
 
-/// MSData -> DuckDB database serialization (write only).
+/// MSData -> SQLite database serialization (write only).
 ///
-/// Unlike the other formats, a DuckDB database is meant to hold every run of an LC-MS batch:
+/// Unlike the other formats, a SQLite database is meant to hold every run of an LC-MS batch:
 /// each run is appended to the database (created if necessary) in a single transaction, and
 /// all rows are keyed by the run's input filename. See DatabaseRunWriter.hpp for the tables.
-class PWIZ_API_DECL Serializer_DuckDB
+class PWIZ_API_DECL Serializer_SQLite
 {
     public:
 
     /// constructs a serializer using the inputFilename and replaceExistingDatabaseRuns settings of config
-    Serializer_DuckDB(const MSDataFile::WriteConfig& config);
+    Serializer_SQLite(const MSDataFile::WriteConfig& config);
 
-    /// appends msd to the DuckDB database at filename, creating the database if it does not exist;
+    /// appends msd to the SQLite database at filename, creating the database if it does not exist;
     /// throws if a run with the same filename is already in the database (unless replacing runs)
     void write(const std::string& filename, const MSData& msd,
                const pwiz::util::IterationListenerRegistry* iterationListenerRegistry = 0) const;
@@ -54,8 +54,8 @@ class PWIZ_API_DECL Serializer_DuckDB
     private:
     class Impl;
     boost::shared_ptr<Impl> impl_;
-    Serializer_DuckDB(Serializer_DuckDB&);
-    Serializer_DuckDB& operator=(Serializer_DuckDB&);
+    Serializer_SQLite(Serializer_SQLite&);
+    Serializer_SQLite& operator=(Serializer_SQLite&);
 };
 
 
@@ -63,4 +63,4 @@ class PWIZ_API_DECL Serializer_DuckDB
 } // namespace pwiz
 
 
-#endif // _SERIALIZER_DUCKDB_HPP_
+#endif // _SERIALIZER_SQLITE_HPP_

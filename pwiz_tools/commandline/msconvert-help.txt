@@ -8,7 +8,7 @@ Options:
   -o [ --outdir ] arg (=.)           : set output directory ('-' for stdout, '.' for current directory) [.]
   -c [ --config ] arg                : configuration file (optionName=value)
   --outfile arg                      : Override the name of output file.
-  -e [ --ext ] arg                   : set extension for output files [mzML|mzXML|mgf|txt|mz5|mzMLb|duckdb]
+  -e [ --ext ] arg                   : set extension for output files [mzML|mzXML|mgf|txt|mz5|mzMLb|duckdb|sqlite]
   --mzML                             : write mzML format [default]
   --mzXML                            : write mzXML format
   --mz5                              : write mz5 format
@@ -16,7 +16,8 @@ Options:
   --mzMLbChunkSize arg (=1048576)    : mzMLb dataset chunk size in bytes
   --mzMLbCompressionLevel arg (=4)   : mzMLb GZIP compression level (0-9)
   --duckdb                           : write all input files into a single DuckDB database (requires --outfile); if the database exists, the runs are added to it
-  --duckdbReplaceRuns                : replace runs that are already in the DuckDB database instead of failing
+  --sqlite                           : write all input files into a single SQLite database (requires --outfile); if the database exists, the runs are added to it
+  --replaceExistingDatabaseRuns      : with --duckdb or --sqlite, replace runs that are already in the database instead of failing
   --mgf                              : write Mascot generic format
   --text                             : write ProteoWizard internal text format
   --ms1                              : write MS1 format
@@ -380,7 +381,7 @@ msconvert data.RAW --filter "peakPicking true 1-" --filter "threshold count 100 
 # multiple filters: apply peak picking and then keep all peaks that are at least 50% of the intensity of the base peak:
 msconvert data.RAW --filter "peakPicking true 1-" --filter "threshold bpi-relative .5 most-intense"
 
-# write every run of an LC-MS batch into one DuckDB database (queryable with SQL)
+# write every run of an LC-MS batch into one DuckDB (or, with --sqlite, SQLite) database (queryable with SQL)
 msconvert *.RAW --duckdb --outfile batch.duckdb
 
 # use a configuration file

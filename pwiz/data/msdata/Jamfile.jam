@@ -96,7 +96,9 @@ lib pwiz_data_msdata
         Serializer_MGF.cpp
         Serializer_MSn.cpp
         [ mz5-build Serializer_mz5.cpp ]
+        DatabaseRunWriter.cpp
         Serializer_DuckDB.cpp # compiles to nothing when WITHOUT_DUCKDB is defined
+        Serializer_SQLite.cpp
         SpectrumList_mzXML.cpp
         SpectrumList_MGF.cpp
         SpectrumList_MSn.cpp
@@ -107,11 +109,13 @@ lib pwiz_data_msdata
         <library>pwiz_data_msdata_core
         [ mz5-build <library>mz5//pwiz_data_msdata_mz5 ]
         <conditional>@duckdb-requirements
+        <library>$(PWIZ_LIBRARIES_PATH)/SQLite//sqlite3
     : # default-build
     : # usage-requirements
         <library>pwiz_data_msdata_core
         [ mz5-build <library>mz5//pwiz_data_msdata_mz5 ]
         <conditional>@duckdb-requirements
+        <library>$(PWIZ_LIBRARIES_PATH)/SQLite//sqlite3
     ;
 
 
@@ -152,7 +156,7 @@ if ! [ without-mz5 ]
 	unit-test-if-exists SpectrumList_mz5_Test : SpectrumList_mz5_Test.cpp pwiz_data_msdata pwiz_data_msdata_examples /ext/boost//filesystem ;
 	unit-test-if-exists ChromatogramList_mz5_Test : ChromatogramList_mz5_Test.cpp pwiz_data_msdata pwiz_data_msdata_examples /ext/boost//filesystem ;
 }
-unit-test-if-exists Serializer_DuckDB_Test : Serializer_DuckDB_Test.cpp pwiz_data_msdata pwiz_data_msdata_examples /ext/boost//filesystem ;
+unit-test-if-exists Serializer_Database_Test : Serializer_Database_Test.cpp pwiz_data_msdata pwiz_data_msdata_examples /ext/boost//filesystem ;
 unit-test-if-exists MSnReaderTest : MSnReaderTest.cpp pwiz_data_msdata pwiz_data_msdata_examples ;
 unit-test-if-exists MSDataFileTest : MSDataFileTest.cpp pwiz_data_msdata pwiz_data_msdata_examples /ext/boost//filesystem ;
 unit-test-if-exists RAMPAdapterTest : RAMPAdapterTest.cpp pwiz_data_msdata pwiz_data_msdata_examples /ext/boost//filesystem ;

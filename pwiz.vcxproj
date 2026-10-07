@@ -359,8 +359,9 @@
     <ClCompile Include="pwiz\data\msdata\References.cpp" />
     <ClCompile Include="pwiz\data\msdata\ReferencesTest.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_DTA.cpp" />
+    <ClCompile Include="pwiz\data\msdata\DatabaseRunWriter.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_DuckDB.cpp" />
-    <ClCompile Include="pwiz\data\msdata\Serializer_DuckDB_Test.cpp" />
+    <ClCompile Include="pwiz\data\msdata\Serializer_Database_Test.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_MGF.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_MGF_Test.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_MSn.cpp" />
@@ -371,6 +372,7 @@
     <ClCompile Include="pwiz\data\msdata\Serializer_mzML_Test.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_mzXML.cpp" />
     <ClCompile Include="pwiz\data\msdata\Serializer_mzXML_Test.cpp" />
+    <ClCompile Include="pwiz\data\msdata\Serializer_SQLite.cpp" />
     <ClCompile Include="pwiz\data\msdata\SpectrumInfo.cpp" />
     <ClCompile Include="pwiz\data\msdata\SpectrumInfoTest.cpp" />
     <ClCompile Include="pwiz\data\msdata\SpectrumIterator.cpp" />
@@ -1228,10 +1230,12 @@
     <ClInclude Include="pwiz\data\msdata\Reader.hpp" />
     <ClInclude Include="pwiz\data\msdata\References.hpp" />
     <ClInclude Include="pwiz\data\msdata\SHA1OutputObserver.hpp" />
+    <ClInclude Include="pwiz\data\msdata\DatabaseRunWriter.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_DuckDB.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_MGF.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_mzML.hpp" />
     <ClInclude Include="pwiz\data\msdata\Serializer_mzXML.hpp" />
+    <ClInclude Include="pwiz\data\msdata\Serializer_SQLite.hpp" />
     <ClInclude Include="pwiz\data\msdata\SpectrumInfo.hpp" />
     <ClInclude Include="pwiz\data\msdata\SpectrumIterator.hpp" />
     <ClInclude Include="pwiz\data\msdata\SpectrumListBase.hpp" />

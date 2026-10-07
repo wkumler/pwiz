@@ -1,8 +1,9 @@
-# msconvert --duckdb (fork of ProteoWizard)
+# msconvert --duckdb / --sqlite (fork of ProteoWizard)
 
-This fork adds one output format to ProteoWizard's `msconvert`: a **DuckDB database** that holds a
-whole LC-MS batch in one file, with plain tables you can query with SQL from R, Python, the DuckDB
-command line, or any other DuckDB client. It follows the approach of
+This fork adds database output to ProteoWizard's `msconvert`: a **DuckDB** or **SQLite database** that
+holds a whole LC-MS batch in one file, with plain tables you can query with SQL from R, Python, the
+DuckDB or SQLite command line, or any other client. Both formats have the same tables. It follows the
+approach of
 [mzsql](https://github.com/wkumler/mzsql) and [mzml2db](https://github.com/wkumler/mzml2db): MS data
 is just a few long tables (`MS1`, `MS2`, ...), so extracting a chromatogram or finding the fragments
 of a precursor is a single `WHERE` clause.
@@ -16,14 +17,14 @@ described below. ProteoWizard's own documentation follows after this section.
 
 ## Install
 
-You build msconvert from this branch. DuckDB itself is bundled (official DuckDB 1.5.6 binaries in
-`libraries/duckdb`), so there is nothing extra to install for it.
+You build msconvert from this branch. DuckDB is bundled (official DuckDB 1.5.6 binaries in
+`libraries/duckdb`) and SQLite is already part of ProteoWizard, so there is nothing extra to install.
 
 | Platform | Supported | Input formats |
 |---|---|---|
-| Windows, 64-bit | yes | mzML, mzXML, MGF, mz5, ... **and vendor formats** |
-| Linux, 64-bit (gcc) | yes | open formats only (ProteoWizard has no vendor readers on Linux) |
-| macOS, 32-bit Windows | no (msconvert builds without `--duckdb`) | |
+| Windows, 64-bit | `--duckdb` and `--sqlite` | mzML, mzXML, MGF, mz5, ... **and vendor formats** |
+| Linux, 64-bit (gcc) | `--duckdb` and `--sqlite` | open formats only (ProteoWizard has no vendor readers on Linux) |
+| macOS, 32-bit Windows | `--sqlite` only (untested; there is no bundled DuckDB library for them) | open formats only on macOS |
 
 ### Windows
 
@@ -63,25 +64,41 @@ cd pwiz
 ```
 The first build takes about 15 minutes and needs about 6 GB of memory at `-j4` (use `-j2` on smaller
 machines). The result is `build-linux-x86_64/gcc-release-x86_64/msconvert`, a standalone executable
-with DuckDB built in.
+with DuckDB and SQLite built in.
 
 ## Use
 
 Convert a batch into one database:
 ```
 msconvert *.raw --duckdb --outfile batch.duckdb
+msconvert *.raw --sqlite --outfile batch.sqlite
 ```
 - `--outfile` is required: it names the database that **all** the input files go into.
 - Running msconvert again with the same `--outfile` **adds** the new files to the existing database.
   Each file is written in one transaction, so a failed conversion leaves the database unchanged.
-- A file whose name is already in the database is an error; add `--duckdbReplaceRuns` to replace it.
+- A file whose name is already in the database is an error; add `--replaceExistingDatabaseRuns` to
+  replace it.
 - msconvert's filters work as usual, for example centroiding with the vendor's algorithm and keeping
   positive-mode scans:
   ```
   msconvert *.raw --filter "peakPicking vendor msLevel=1-" --filter "polarity positive" --duckdb --outfile batch.duckdb
   ```
 - `-o <folder>` sets where the database goes. `--merge`, `--gzip` and writing to stdout (`-o -`) are
-  not supported with `--duckdb`.
+  not supported with `--duckdb` or `--sqlite`.
+
+### DuckDB or SQLite?
+
+DuckDB is the better choice for analysis: its files are compressed and it filters large tables quickly
+without any indexes. SQLite is everywhere (Python's standard library, every language, every platform)
+and needs nothing beyond ProteoWizard itself, but its files are several times larger. For two Thermo
+Q Exactive HILIC files (34 MB of mzML, 2.4 million MS1 points), on Linux:
+
+| | DuckDB | SQLite |
+|---|---|---|
+| file size | 36 MB | 167 MB |
+| conversion time | 4.9 s | 9.2 s |
+| extracted ion chromatogram (10 ppm) | 20 ms | 430 ms |
+| one spectrum (`filename` and `scan_idx`) | < 1 ms | 430 ms |
 
 ## What is in the database
 
@@ -118,12 +135,19 @@ R:
 ```r
 library(DBI)
 con <- dbConnect(duckdb::duckdb(), "batch.duckdb", read_only = TRUE)
+# or, for SQLite: con <- dbConnect(RSQLite::SQLite(), "batch.sqlite", flags = RSQLite::SQLITE_RO)
 # extracted ion chromatogram of glycine betaine ([M+H]+ 118.0865, +/- 10 ppm) in every file
 eic <- dbGetQuery(con, "SELECT filename, rt, sum(int) AS int FROM MS1
                         WHERE mz BETWEEN 118.0853 AND 118.0877 GROUP BY filename, rt ORDER BY filename, rt")
-dbDisconnect(con, shutdown = TRUE)
+dbDisconnect(con)
 ```
-More SQL, from any DuckDB client:
+Python, for SQLite (no packages needed):
+```python
+import sqlite3
+con = sqlite3.connect("batch.sqlite")
+eic = con.execute("SELECT filename, rt, int FROM MS1 WHERE mz BETWEEN 118.0853 AND 118.0877").fetchall()
+```
+More SQL (all but the last work in both DuckDB and SQLite):
 ```sql
 -- one spectrum
 SELECT mz, int FROM MS1 WHERE filename = 'sample1.raw' AND scan_idx = 100;
@@ -137,6 +161,7 @@ SELECT filename, n_scans, rt_start, rt_end, instrument FROM file_info;
 COPY (SELECT * FROM MS1) TO 'MS1.parquet' (FORMAT parquet);
 ```
 Databases written by this build open in older DuckDB clients too (tested with R's duckdb 1.3.2).
+In SQLite, `scan_info.centroided` is stored as 0 or 1.
 
 ## How it was checked
 
@@ -152,8 +177,8 @@ ProteoWizard's full test suite passes on Windows and Linux.
 
 ## Known limitations
 
-- Write only: msconvert and other ProteoWizard tools cannot read a `.duckdb` file back.
-- No macOS or 32-bit Windows support (no bundled DuckDB library for them).
+- Write only: msconvert and other ProteoWizard tools cannot read a `.duckdb` or `.sqlite` file back.
+- No DuckDB output on macOS or 32-bit Windows (no bundled DuckDB library for them).
 - The schema may still change. Databases written by earlier builds of this branch cannot be appended to
   by later ones (start a new database).
 - Thermo centroids from `peakPicking vendor` include a few small peaks next to very intense ones that
@@ -174,7 +199,7 @@ Core code and libraries are under the Apache open source license; the vendor lib
 * reference implementation of HUPO-PSI mzML standard mass spectrometry data format
 * supports HUPO-PSI mzIdentML 1.1 standard mass spectrometry analysis format
 * supports reading directly from many vendor raw data formats (on Windows)
-* writes whole LC-MS batches to a single DuckDB database for SQL queries (`msconvert --duckdb`; 64-bit Windows and Linux)
+* writes whole LC-MS batches to a single DuckDB or SQLite database for SQL queries (`msconvert --duckdb`, `msconvert --sqlite`)
 * modern C++ techniques and design principles
 * cross-platform with native compilers (MSVC on Windows, gcc on Linux, darwin on OSX)
 * modular design, for testability and extensibility

@@ -103,7 +103,8 @@ string Config::outputFilename(const string& filename, const MSData& msd) const
             extension == ".cms2" ||
             extension == ".mzmlb" ||
             extension == ".mz5" ||
-            extension == ".duckdb")
+            extension == ".duckdb" ||
+            extension == ".sqlite")
             runId = bfs::basename(runId);
     }
 
@@ -198,7 +199,7 @@ void ShowExamples(ostringstream &usage)
         << "# multiple filters: apply peak picking and then keep all peaks that are at least 50% of the intensity of the base peak:\n"
         << "msconvert data.RAW --filter \"peakPicking true 1-\" --filter \"threshold bpi-relative .5 most-intense\"\n"
         << endl
-        << "# write every run of an LC-MS batch into one DuckDB database (queryable with SQL)\n"
+        << "# write every run of an LC-MS batch into one DuckDB (or, with --sqlite, SQLite) database (queryable with SQL)\n"
         << "msconvert *.RAW --duckdb --outfile batch.duckdb\n"
         << endl
         << "# use a configuration file\n"
@@ -248,6 +249,7 @@ Config parseCommandLine(int argc, char** argv)
     int mzMLb_chunk_size = 0;    
     bool format_mz5 = false;
     bool format_duckdb = false;
+    bool format_sqlite = false;
     bool precision_32 = false;
     bool precision_64 = false;
     bool mz_precision_32 = false;
@@ -308,6 +310,7 @@ Config parseCommandLine(int argc, char** argv)
 #ifndef WITHOUT_DUCKDB
             "|duckdb"
 #endif
+            "|sqlite"
             "]")
         ("mzML",
             po::value<bool>(&format_mzML)->zero_tokens(),
@@ -336,10 +339,14 @@ Config parseCommandLine(int argc, char** argv)
             po::value<bool>(&format_duckdb)->zero_tokens(),
             ": write all input files into a single DuckDB database (requires --outfile); "
             "if the database exists, the runs are added to it")
-        ("duckdbReplaceRuns",
-            po::value<bool>(&config.writeConfig.duckdbReplaceRuns)->zero_tokens(),
-            ": replace runs that are already in the DuckDB database instead of failing")
 #endif
+        ("sqlite",
+            po::value<bool>(&format_sqlite)->zero_tokens(),
+            ": write all input files into a single SQLite database (requires --outfile); "
+            "if the database exists, the runs are added to it")
+        ("replaceExistingDatabaseRuns",
+            po::value<bool>(&config.writeConfig.replaceExistingDatabaseRuns)->zero_tokens(),
+            ": with --duckdb or --sqlite, replace runs that are already in the database instead of failing")
         ("mgf",
             po::value<bool>(&format_MGF)->zero_tokens(),
             ": write Mascot generic format")
@@ -637,7 +644,7 @@ Config parseCommandLine(int argc, char** argv)
     if (config.filenames.empty())
         throw user_error("[msconvert] No files specified.");
 
-    int count = format_text + format_mzML + format_mzXML + format_MGF + format_MS2 + format_CMS2 + format_mz5 + format_mzMLb + format_duckdb;
+    int count = format_text + format_mzML + format_mzXML + format_MGF + format_MS2 + format_CMS2 + format_mz5 + format_mzMLb + format_duckdb + format_sqlite;
     if (count > 1) throw user_error("[msconvert] Multiple format flags specified.");
     if (format_text) config.writeConfig.format = MSDataFile::Format_Text;
     if (format_mzML) config.writeConfig.format = MSDataFile::Format_mzML;
@@ -650,19 +657,23 @@ Config parseCommandLine(int argc, char** argv)
     if (format_mz5) config.writeConfig.format = MSDataFile::Format_MZ5;
     if (format_mzMLb) config.writeConfig.format = MSDataFile::Format_mzMLb;
     if (format_duckdb) config.writeConfig.format = MSDataFile::Format_DuckDB;
+    if (format_sqlite) config.writeConfig.format = MSDataFile::Format_SQLite;
 
-    // a DuckDB database holds every input file, so it needs a name that doesn't come from any one of them
-    if (format_duckdb)
+    // a database holds every input file, so it needs a name that doesn't come from any one of them
+    if (format_duckdb || format_sqlite)
     {
+        string flag = format_duckdb ? "--duckdb" : "--sqlite";
         if (config.outputFile.empty())
-            throw user_error("[msconvert] --duckdb requires --outfile to name the database that all input files are written to.");
+            throw user_error("[msconvert] " + flag + " requires --outfile to name the database that all input files are written to.");
         if (config.outputPath == "-")
-            throw user_error("[msconvert] --duckdb cannot write to stdout.");
+            throw user_error("[msconvert] " + flag + " cannot write to stdout.");
         if (config.merge)
-            throw user_error("[msconvert] --duckdb already combines all input files into one database; --merge is not supported with it.");
+            throw user_error("[msconvert] " + flag + " already combines all input files into one database; --merge is not supported with it.");
         if (gzip)
-            throw user_error("[msconvert] --gzip is not supported with --duckdb.");
+            throw user_error("[msconvert] --gzip is not supported with " + flag + ".");
     }
+    else if (config.writeConfig.replaceExistingDatabaseRuns)
+        throw user_error("[msconvert] --replaceExistingDatabaseRuns only applies to --duckdb and --sqlite output.");
 
     config.writeConfig.gzipped = gzip; // if true, file is written as .gz
 
@@ -711,6 +722,9 @@ Config parseCommandLine(int argc, char** argv)
                 throw user_error("[msconvert] Not built with DuckDB support.");
 #endif
                 config.extension = ".duckdb";
+                break;
+            case MSDataFile::Format_SQLite:
+                config.extension = ".sqlite";
                 break;
             default:
                 throw user_error("[msconvert] Unsupported format."); 
@@ -1149,8 +1163,8 @@ void processFile(const string& filename, const Config& config, const ReaderList&
                     throw user_error("[msconvert] Output filepath is the same as input filepath");
                 }
 
-                // a DuckDB database accumulates runs, so it is appended to in place (each run is written in one transaction)
-                if (configCopy.writeConfig.format == MSDataFile::Format_DuckDB)
+                // a database accumulates runs, so it is appended to in place (each run is written in one transaction)
+                if (configCopy.writeConfig.format == MSDataFile::Format_DuckDB || configCopy.writeConfig.format == MSDataFile::Format_SQLite)
                     MSDataFile::write(msd, outputFilename, configCopy.writeConfig, pILR);
                 else
                     writeAtomically(msd, outputFilename, configCopy.writeConfig, pILR);

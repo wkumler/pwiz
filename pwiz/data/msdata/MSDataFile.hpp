@@ -46,7 +46,7 @@ struct PWIZ_API_DECL MSDataFile : public MSData
                bool calculateSourceFileChecksum = false);
 
     /// data format for write()
-    enum PWIZ_API_DECL Format {Format_Text, Format_mzML, Format_mzXML, Format_MGF, Format_MS1, Format_CMS1, Format_MS2, Format_CMS2, Format_MZ5, Format_mzMLb, Format_DuckDB};
+    enum PWIZ_API_DECL Format {Format_Text, Format_mzML, Format_mzXML, Format_MGF, Format_MS1, Format_CMS1, Format_MS2, Format_CMS2, Format_MZ5, Format_mzMLb, Format_DuckDB, Format_SQLite};
 
     /// configuration for write()
     struct PWIZ_API_DECL WriteConfig
@@ -60,11 +60,11 @@ struct PWIZ_API_DECL MSDataFile : public MSData
         int mzMLb_compression_level = 4;
         int mzMLb_chunk_size = 1048576;
 
-        /// name of the file the data was read from; DuckDB output stores it in the filename column of every table
+        /// name of the file the data was read from; database output (DuckDB, SQLite) stores it in the filename column of every table
         std::string inputFilename;
 
-        /// if true, a run whose filename is already in the DuckDB database replaces it; otherwise writing it is an error
-        bool duckdbReplaceRuns = false;
+        /// if true, a run whose filename is already in the output database replaces it; otherwise writing it is an error
+        bool replaceExistingDatabaseRuns = false;
 
         /// when true, if an error is seen when enumerating a spectrum or chromatogram, it will be skipped and enumeration will continue;
         /// when false an error will immediately stop enumeration

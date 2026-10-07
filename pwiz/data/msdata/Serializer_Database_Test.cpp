@@ -24,31 +24,56 @@
 #include "pwiz/utility/misc/unit.hpp"
 #include "pwiz/utility/misc/Filesystem.hpp"
 #include "pwiz/utility/misc/Std.hpp"
-
-#ifdef WITHOUT_DUCKDB
-
-int main(int argc, char* argv[])
-{
-    TEST_PROLOG(argc, argv)
-    TEST_EPILOG
-}
-
-#else // WITHOUT_DUCKDB
-
-#include "Serializer_DuckDB.hpp"
+#include "MSDataFile.hpp"
 #include "examples.hpp"
+#include "sqlite3.h"
+#ifndef WITHOUT_DUCKDB
 #include "duckdb.h"
+#endif
 
 using namespace pwiz::util;
 using namespace pwiz::cv;
 using namespace pwiz::msdata;
 
 
+// The same tests run against each database format (see DatabaseRunWriter.hpp for the tables).
+
+
 ostream* os_ = 0;
 
 
-/// reads the first value of a query result from a DuckDB database (as a string, or "NULL")
-string queryValue(const string& dbFilename, const string& sql)
+/// a database format: how to write it and how to read the first value of a query result (as a string, or "NULL")
+struct Backend
+{
+    string name;
+    MSDataFile::Format format;
+    string (*queryValue)(const string& dbFilename, const string& sql);
+};
+
+const Backend* backend_ = 0;
+
+
+string sqliteQueryValue(const string& dbFilename, const string& sql)
+{
+    sqlite3* db = nullptr;
+    unit_assert(sqlite3_open_v2(dbFilename.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
+
+    sqlite3_stmt* stmt = nullptr;
+    string value;
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK)
+        value = string("ERROR: ") + sqlite3_errmsg(db);
+    else if (sqlite3_step(stmt) != SQLITE_ROW || sqlite3_column_type(stmt, 0) == SQLITE_NULL)
+        value = "NULL";
+    else
+        value = (const char*) sqlite3_column_text(stmt, 0);
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return value;
+}
+
+
+#ifndef WITHOUT_DUCKDB
+string duckdbQueryValue(const string& dbFilename, const string& sql)
 {
     duckdb_database db;
     duckdb_connection con;
@@ -68,9 +93,16 @@ string queryValue(const string& dbFilename, const string& sql)
     duckdb_destroy_result(&result);
     duckdb_disconnect(&con);
     duckdb_close(&db);
+    return value;
+}
+#endif
 
+
+string queryValue(const string& dbFilename, const string& sql)
+{
+    string value = backend_->queryValue(dbFilename, sql);
     if (os_)
-        *os_ << sql << " -> " << value << endl;
+        *os_ << backend_->name << ": " << sql << " -> " << value << endl;
     return value;
 }
 
@@ -97,12 +129,11 @@ size_t countPoints(const MSData& msd, int msLevel)
 
 void write(const MSData& msd, const string& dbFilename, const string& runName, bool replaceRuns = false)
 {
-    MSDataFile::WriteConfig config(MSDataFile::Format_DuckDB);
+    MSDataFile::WriteConfig config(backend_->format);
     config.inputFilename = runName;
-    config.duckdbReplaceRuns = replaceRuns;
+    config.replaceExistingDatabaseRuns = replaceRuns;
     config.useWorkerThreads = false;
-    Serializer_DuckDB serializer(config);
-    serializer.write(dbFilename, msd);
+    MSDataFile::write(msd, dbFilename, config);
 }
 
 
@@ -231,24 +262,33 @@ int main(int argc, char* argv[])
 {
     TEST_PROLOG(argc, argv)
 
-    string dbFilename = (bfs::temp_directory_path() / bfs::unique_path("Serializer_DuckDB_Test-%%%%%%.duckdb")).string();
-    try
+    vector<Backend> backends;
+    backends.push_back(Backend{"SQLite", MSDataFile::Format_SQLite, &sqliteQueryValue});
+#ifndef WITHOUT_DUCKDB
+    backends.push_back(Backend{"DuckDB", MSDataFile::Format_DuckDB, &duckdbQueryValue});
+#endif
+
+    if (argc>1 && !strcmp(argv[1],"-v")) os_ = &cout;
+    for (const Backend& backend : backends)
     {
-        if (argc>1 && !strcmp(argv[1],"-v")) os_ = &cout;
-        test(dbFilename);
+        backend_ = &backend;
+        string dbFilename = (bfs::temp_directory_path() / bfs::unique_path("Serializer_Database_Test-%%%%%%.db")).string();
+        try
+        {
+            test(dbFilename);
+        }
+        catch (exception& e)
+        {
+            TEST_FAILED(backend.name + ": " + e.what())
+        }
+        catch (...)
+        {
+            TEST_FAILED(backend.name + ": caught unknown exception.")
+        }
+        bfs::remove(dbFilename);
+        bfs::remove(dbFilename + ".wal");
+        bfs::remove(dbFilename + "-journal");
     }
-    catch (exception& e)
-    {
-        TEST_FAILED(e.what())
-    }
-    catch (...)
-    {
-        TEST_FAILED("Caught unknown exception.")
-    }
-    bfs::remove(dbFilename);
-    bfs::remove(dbFilename + ".wal");
 
     TEST_EPILOG
 }
-
-#endif // WITHOUT_DUCKDB

@@ -39,6 +39,7 @@ using namespace pwiz::msdata::mzmlb;
 #ifndef WITHOUT_DUCKDB
 #include "Serializer_DuckDB.hpp"
 #endif
+#include "Serializer_SQLite.hpp"
 #include "DefaultReaderList.hpp"
 #include "pwiz/utility/misc/Filesystem.hpp"
 #include "pwiz/utility/misc/Std.hpp"
@@ -216,6 +217,8 @@ void writeStream(ostream& os, const MSData& msd, const MSDataFile::WriteConfig& 
             throw runtime_error("[MSDataFile::write()] mz5 does not support writing with an output stream.");
         case MSDataFile::Format_DuckDB:
             throw runtime_error("[MSDataFile::write()] DuckDB does not support writing with an output stream.");
+        case MSDataFile::Format_SQLite:
+            throw runtime_error("[MSDataFile::write()] SQLite does not support writing with an output stream.");
         default:
             throw runtime_error("[MSDataFile::write()] Format not implemented.");
     }
@@ -268,6 +271,12 @@ void MSDataFile::write(const MSData& msd,
             Serializer_DuckDB serializer(config);
             serializer.write(filename, msd, iterationListenerRegistry);
 #endif
+            break;
+        }
+        case MSDataFile::Format_SQLite:
+        {
+            Serializer_SQLite serializer(config);
+            serializer.write(filename, msd, iterationListenerRegistry);
             break;
         }
         default:
@@ -371,6 +380,9 @@ PWIZ_API_DECL ostream& operator<<(ostream& os, MSDataFile::Format format)
             return os;
         case MSDataFile::Format_DuckDB:
             os << "DuckDB";
+            return os;
+        case MSDataFile::Format_SQLite:
+            os << "SQLite";
             return os;
         default:
             os << "Unknown";
