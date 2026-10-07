@@ -64,9 +64,17 @@ jobs:
           version=${GITHUB_REF_NAME//\//-}
           pkg=msconvert-duckdb-$version-${{ matrix.config.name }}-x86_64
           mkdir "$pkg"
-          # on Windows this also picks up duckdb.dll and the MSVC runtime DLLs
-          find "$bindir" -maxdepth 1 -type f ! -name '*.pdb' ! -name '*.ilk' -exec cp {} "$pkg"/ \;
+          # copy only what msconvert needs (the build folder also holds runtimes for other pwiz tools)
+          cp "$exe" "$bindir/LICENSE.DuckDB" "$pkg"/
           cp LICENSE "$pkg"/LICENSE.ProteoWizard
+          if [ "${{ matrix.config.name }}" = windows ]; then
+            cp "$bindir/duckdb.dll" "$pkg"/
+            # the C++ runtime from the Visual Studio that built msconvert (Microsoft's redistributable files);
+            # the universal C runtime it also needs is part of Windows 10 and later
+            vs=$("/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe" -latest -property installationPath)
+            crt=$(ls -d "$(cygpath "$vs")"/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT | sort -V | tail -n 1)
+            cp "$crt/msvcp140.dll" "$crt/vcruntime140.dll" "$crt/vcruntime140_1.dll" "$pkg"/
+          fi
           ls -la "$pkg"
           echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
 
@@ -77,9 +85,9 @@ jobs:
           bad=0
           for f in ${{ steps.collect.outputs.pkg }}/*; do
             case "$(basename "$f")" in
-              msconvert|msconvert.exe|msconvert.exe.config|msconvert.exe.manifest) ;;
+              msconvert|msconvert.exe) ;;
               duckdb.dll|LICENSE.DuckDB|LICENSE.ProteoWizard) ;;
-              msvcp1*.dll|vcruntime1*.dll|concrt1*.dll|vccorlib1*.dll|vcomp1*.dll) ;;
+              msvcp140.dll|vcruntime140.dll|vcruntime140_1.dll) ;;
               *) echo "unexpected file in package: $f"; bad=1 ;;
             esac
           done
