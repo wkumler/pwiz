@@ -250,6 +250,7 @@ Config parseCommandLine(int argc, char** argv)
     bool format_mz5 = false;
     bool format_duckdb = false;
     bool format_sqlite = false;
+    vector<string> databaseIndexArgs;
     bool precision_32 = false;
     bool precision_64 = false;
     bool mz_precision_32 = false;
@@ -347,6 +348,11 @@ Config parseCommandLine(int argc, char** argv)
         ("replaceExistingDatabaseRuns",
             po::value<bool>(&config.writeConfig.replaceExistingDatabaseRuns)->zero_tokens(),
             ": with --duckdb or --sqlite, replace runs that are already in the database instead of failing")
+        ("databaseIndex",
+            po::value< vector<string> >(&databaseIndexArgs),
+            ": with --duckdb or --sqlite, index these columns (separated by commas or spaces, e.g. \"mz premz\") in every "
+            "table that has them; indexes speed up filtering on those columns but make the database larger "
+            "(SQLite benefits most; DuckDB filters quickly without them)")
         ("mgf",
             po::value<bool>(&format_MGF)->zero_tokens(),
             ": write Mascot generic format")
@@ -674,6 +680,19 @@ Config parseCommandLine(int argc, char** argv)
     }
     else if (config.writeConfig.replaceExistingDatabaseRuns)
         throw user_error("[msconvert] --replaceExistingDatabaseRuns only applies to --duckdb and --sqlite output.");
+    else if (!databaseIndexArgs.empty())
+        throw user_error("[msconvert] --databaseIndex only applies to --duckdb and --sqlite output.");
+
+    for (const string& arg : databaseIndexArgs)
+    {
+        vector<string> columns;
+        bal::split(columns, arg, bal::is_any_of(", "), bal::token_compress_on);
+        for (const string& column : columns)
+        {
+            if (!column.empty())
+                config.writeConfig.databaseIndexColumns.push_back(column);
+        }
+    }
 
     config.writeConfig.gzipped = gzip; // if true, file is written as .gz
 

@@ -145,6 +145,10 @@ class SQLiteConnection : public database::Connection
             sqlite3_close(db_);
             throw runtime_error("[Serializer_SQLite::write()] unable to open \"" + filename + "\": " + message);
         }
+
+        // a larger page cache (up to 256 MB, allocated as needed; the default is 2 MB) makes adding rows to
+        // tables with indexes much faster
+        execute("PRAGMA cache_size = -262144");
     }
 
     virtual ~SQLiteConnection() { sqlite3_close(db_); }

@@ -18,6 +18,7 @@ Options:
   --duckdb                           : write all input files into a single DuckDB database (requires --outfile); if the database exists, the runs are added to it
   --sqlite                           : write all input files into a single SQLite database (requires --outfile); if the database exists, the runs are added to it
   --replaceExistingDatabaseRuns      : with --duckdb or --sqlite, replace runs that are already in the database instead of failing
+  --databaseIndex arg                : with --duckdb or --sqlite, index these columns (separated by commas or spaces, e.g. "mz premz") in every table that has them; indexes speed up filtering on those columns but make the database larger (SQLite benefits most; DuckDB filters quickly without them)
   --mgf                              : write Mascot generic format
   --text                             : write ProteoWizard internal text format
   --ms1                              : write MS1 format

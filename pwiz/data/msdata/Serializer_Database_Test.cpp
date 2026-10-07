@@ -48,6 +48,7 @@ struct Backend
     string name;
     MSDataFile::Format format;
     string (*queryValue)(const string& dbFilename, const string& sql);
+    string indexCountSql; // counts the indexes in the database
 };
 
 const Backend* backend_ = 0;
@@ -127,11 +128,13 @@ size_t countPoints(const MSData& msd, int msLevel)
 }
 
 
-void write(const MSData& msd, const string& dbFilename, const string& runName, bool replaceRuns = false)
+void write(const MSData& msd, const string& dbFilename, const string& runName, bool replaceRuns = false,
+           const vector<string>& indexColumns = vector<string>())
 {
     MSDataFile::WriteConfig config(backend_->format);
     config.inputFilename = runName;
     config.replaceExistingDatabaseRuns = replaceRuns;
+    config.databaseIndexColumns = indexColumns;
     config.useWorkerThreads = false;
     MSDataFile::write(msd, dbFilename, config);
 }
@@ -150,6 +153,7 @@ struct FailingSpectrumList : public SpectrumListSimple
 
 
 void testMultiplexingAndIonMobility(const string& dbFilename);
+void testIndexes(const string& dbFilename);
 
 
 void test(const string& dbFilename)
@@ -216,6 +220,7 @@ void test(const string& dbFilename)
     unit_assert_operator_equal(2 * ms1Points, queryCount(dbFilename, "SELECT count(*) FROM MS1"));
 
     testMultiplexingAndIonMobility(dbFilename);
+    testIndexes(dbFilename);
 }
 
 
@@ -258,14 +263,38 @@ void testMultiplexingAndIonMobility(const string& dbFilename)
 }
 
 
+/// no indexes are created unless asked for; each requested column is indexed in every table that has it
+void testIndexes(const string& dbFilename)
+{
+    MSData tiny;
+    examples::initializeTiny(tiny);
+    unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, backend_->indexCountSql));
+
+    // an unknown column is an error, and nothing is written
+    unit_assert_throws(write(tiny, dbFilename, "indexed.mzML", false, vector<string>{"mz", "no_such_column"}), user_error);
+    unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, "SELECT count(*) FROM file_info WHERE filename = 'indexed.mzML'"));
+    unit_assert_operator_equal((int64_t) 0, queryCount(dbFilename, backend_->indexCountSql));
+
+    // mz is only in MS1; rt is in MS1, MS2, scan_info and chroms
+    write(tiny, dbFilename, "indexed.mzML", false, vector<string>{"mz", "rt"});
+    unit_assert_operator_equal((int64_t) 5, queryCount(dbFilename, backend_->indexCountSql));
+    unit_assert_operator_equal("15.0", queryValue(dbFilename, "SELECT \"int\" FROM MS1 WHERE filename = 'indexed.mzML' AND scan_idx = 0 AND mz = 0"));
+
+    // asking for existing indexes again (here while replacing a run) keeps them
+    write(tiny, dbFilename, "indexed.mzML", true, vector<string>{"mz"});
+    unit_assert_operator_equal((int64_t) 5, queryCount(dbFilename, backend_->indexCountSql));
+    unit_assert_operator_equal((int64_t) 1, queryCount(dbFilename, "SELECT count(*) FROM file_info WHERE filename = 'indexed.mzML'"));
+}
+
+
 int main(int argc, char* argv[])
 {
     TEST_PROLOG(argc, argv)
 
     vector<Backend> backends;
-    backends.push_back(Backend{"SQLite", MSDataFile::Format_SQLite, &sqliteQueryValue});
+    backends.push_back(Backend{"SQLite", MSDataFile::Format_SQLite, &sqliteQueryValue, "SELECT count(*) FROM sqlite_master WHERE type = 'index'"});
 #ifndef WITHOUT_DUCKDB
-    backends.push_back(Backend{"DuckDB", MSDataFile::Format_DuckDB, &duckdbQueryValue});
+    backends.push_back(Backend{"DuckDB", MSDataFile::Format_DuckDB, &duckdbQueryValue, "SELECT count(*) FROM duckdb_indexes()"});
 #endif
 
     if (argc>1 && !strcmp(argv[1],"-v")) os_ = &cout;

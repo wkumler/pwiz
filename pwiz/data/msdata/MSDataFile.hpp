@@ -66,6 +66,9 @@ struct PWIZ_API_DECL MSDataFile : public MSData
         /// if true, a run whose filename is already in the output database replaces it; otherwise writing it is an error
         bool replaceExistingDatabaseRuns = false;
 
+        /// columns to index in database output (e.g. "mz"); each is indexed in every table that has it
+        std::vector<std::string> databaseIndexColumns;
+
         /// when true, if an error is seen when enumerating a spectrum or chromatogram, it will be skipped and enumeration will continue;
         /// when false an error will immediately stop enumeration
         bool continueOnError;

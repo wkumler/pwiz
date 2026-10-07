@@ -116,7 +116,8 @@ class Connection
 
 /// writes msd as a run of the database (see above), creating the tables if necessary; the run is named by
 /// config.inputFilename (or else the run id), and replaces a run of the same name only if
-/// config.replaceExistingDatabaseRuns is set; serializerName prefixes error messages
+/// config.replaceExistingDatabaseRuns is set; the columns in config.databaseIndexColumns are indexed in every
+/// table that has them (no indexes by default, to keep the database small); serializerName prefixes error messages
 void writeRun(Connection& connection, const std::string& databaseFilename, const MSData& msd,
               const MSDataFile::WriteConfig& config, const std::string& serializerName,
               const pwiz::util::IterationListenerRegistry* iterationListenerRegistry);

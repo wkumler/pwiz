@@ -90,15 +90,41 @@ msconvert *.raw --sqlite --outfile batch.sqlite
 
 DuckDB is the better choice for analysis: its files are compressed and it filters large tables quickly
 without any indexes. SQLite is everywhere (Python's standard library, every language, every platform)
-and needs nothing beyond ProteoWizard itself, but its files are several times larger. For two Thermo
-Q Exactive HILIC files (34 MB of mzML, 2.4 million MS1 points), on Linux:
+and needs nothing beyond ProteoWizard itself, but its files are several times larger and, without
+indexes (see below), its queries are much slower. For two Thermo Q Exactive HILIC files (34 MB of
+mzML, 2.4 million MS1 points), on Linux:
 
 | | DuckDB | SQLite |
 |---|---|---|
 | file size | 36 MB | 167 MB |
-| conversion time | 4.9 s | 9.2 s |
+| conversion time | about 3 s | about 3 s |
 | extracted ion chromatogram (10 ppm) | 20 ms | 430 ms |
 | one spectrum (`filename` and `scan_idx`) | < 1 ms | 430 ms |
+
+### Indexes
+
+No indexes are created by default, to keep the database small. `--databaseIndex` indexes the columns
+you name (separated by commas or spaces) in every table that has them; for example `rt` is indexed in
+`MS1`, `MS2`, `scan_info` and `chroms`, and `mz` only in `MS1`:
+```
+msconvert *.raw --sqlite --databaseIndex "mz premz" --outfile batch.sqlite
+```
+Indexes are worth it for SQLite, which otherwise reads the whole table for every query. For the same
+two files:
+
+| SQLite indexes | file size | chromatogram (10 ppm) | rt window (1 min) | one spectrum |
+|---|---|---|---|---|
+| none | 167 MB | 429 ms | 508 ms | 435 ms |
+| `mz` | 207 MB | 18 ms | 428 ms | 412 ms |
+| `mz rt` | 247 MB | 14 ms | 12 ms | 356 ms |
+| `filename scan_idx` | 268 MB | 456 ms | 209 ms | 0.3 ms |
+
+DuckDB rarely needs them (it is already fast without), and its indexes are large: an `mz` index made
+the DuckDB file five times bigger (36 MB to 184 MB).
+
+Once a database has an index, later runs added to it keep it up to date (whether or not they ask for
+it), which makes adding runs slower. Indexes can also be added or dropped later with SQL, for example
+`CREATE INDEX MS1_mz ON MS1 (mz)` or `DROP INDEX MS1_mz`.
 
 ## What is in the database
 

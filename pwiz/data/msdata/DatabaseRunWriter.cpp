@@ -55,6 +55,51 @@ const char* createTablesSql =
 const char* tableNames[] = {"MS1", "MS2", "scan_info", "chroms", "file_info"};
 
 
+/// the tables that can be indexed and their columns (file_info, with a row per run, is too small to need indexes)
+struct IndexableTable
+{
+    const char* name;
+    vector<string> columns;
+};
+
+const vector<IndexableTable>& indexableTables()
+{
+    static const vector<IndexableTable> tables =
+    {
+        {"MS1", {"filename", "scan_idx", "rt", "mz", "int", "ion_mobility"}},
+        {"MS2", {"filename", "scan_idx", "rt", "premz", "fragmz", "int", "voltage", "ion_mobility"}},
+        {"scan_info", {"filename", "scan_idx", "native_id", "ms_level", "rt", "polarity", "centroided", "premz", "voltage",
+                       "tic", "bpc", "min_mz", "max_mz", "ion_mobility"}},
+        {"chroms", {"filename", "chrom_type", "chrom_index", "target_mz", "product_mz", "rt", "int"}}
+    };
+    return tables;
+}
+
+
+/// returns the statements that create an index on each of the given columns in every table that has it;
+/// throws if a column is in none of the tables
+vector<string> createIndexStatements(const vector<string>& columns, const string& serializerName)
+{
+    vector<string> statements;
+    for (const string& column : columns)
+    {
+        bool found = false;
+        for (const IndexableTable& table : indexableTables())
+        {
+            if (std::find(table.columns.begin(), table.columns.end(), column) == table.columns.end())
+                continue;
+            found = true;
+            string indexName = string(table.name) + "_" + column;
+            statements.push_back("CREATE INDEX IF NOT EXISTS \"" + indexName + "\" ON " + table.name + " (\"" + column + "\")");
+        }
+        if (!found)
+            throw user_error("[" + serializerName + "::write()] cannot index \"" + column + "\": it is not a column of the "
+                             "MS1, MS2, scan_info or chroms tables");
+    }
+    return statements;
+}
+
+
 template <typename T>
 boost::optional<T> optionalValue(const CVParam& param)
 {
@@ -344,6 +389,9 @@ void writeRun(Connection& connection, const string& databaseFilename, const MSDa
     if (runName.empty())
         throw runtime_error("[" + serializerName + "::write()] no input filename or run id to identify the run by");
 
+    // checked before anything is written, so an unknown column leaves the database as it was
+    vector<string> createIndexes = createIndexStatements(config.databaseIndexColumns, serializerName);
+
     connection.execute(createTablesSql);
 
     // the whole run is written in one transaction, so a failed conversion leaves the database as it was
@@ -362,6 +410,12 @@ void writeRun(Connection& connection, const string& databaseFilename, const MSDa
 
         // the table writers are destroyed when writeRows returns or throws, before the transaction ends
         writeRows(connection, runName, msd, config, serializerName, iterationListenerRegistry);
+
+        // building an index after the rows are written is faster than updating it with every row; an index
+        // that already exists (from an earlier run) is kept up to date by the database as rows are added
+        for (const string& createIndex : createIndexes)
+            connection.execute(createIndex);
+
         connection.execute("COMMIT");
     }
     catch (...)
