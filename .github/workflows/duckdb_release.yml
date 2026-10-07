@@ -39,11 +39,11 @@ jobs:
     runs-on: ${{ matrix.config.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Get number of CPU cores
         id: cpu-count
-        uses: SimenB/github-actions-cpu-cores@v1
+        uses: SimenB/github-actions-cpu-cores@v3
 
       - name: Build msconvert
         shell: bash
@@ -118,7 +118,7 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path ${{ steps.collect.outputs.pkg }} -DestinationPath ${{ steps.collect.outputs.pkg }}.zip
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.collect.outputs.pkg }}
           path: |
@@ -134,7 +134,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
